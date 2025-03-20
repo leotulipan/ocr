@@ -1,0 +1,13 @@
+[project]
+name = "template"
+version = "0.1.0"
+authors = [
+    { name = "Leonard Tulipan", email = "leo@leotulipan.at" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "argparse>=1.4.0",
+    "loguru>=0.7.3",
+    "python-dotenv>=1.0.1",
+    "requests>=2.32.3",
+]
