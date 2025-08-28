@@ -20,18 +20,70 @@
   [x] Integrate into save flow so it runs automatically on save
   [x] Count and record images in metadata
   [x] Display API image count and saved image count to stdout
+[x] Build and install OCR tool globally for Windows 11
+  [x] Create proper package structure for distribution
+  [x] Add build configuration to pyproject.toml
+  [x] Build wheel package with `uv build --wheel`
+  [x] Install globally using `uv tool install dist/ocr-0.1.0-py3-none-any.whl`
+  [x] Test global `ocr` command from any terminal - SUCCESS!
+  [x] Create uninstall instructions using `uv tool uninstall ocr`
+  [x] Document installation process in README.md
+  [x] Resolve OneDrive permission issues by moving project to local directory
+  [x] Update shell PATH with `uv tool update-shell`
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## In Progress Tasks
 -------------------------------------------------------------------------------------------------------------------------------
 
-
 -------------------------------------------------------------------------------------------------------------------------------
 ## Future Tasks
-------------------------------------------------------------------------------------------------------------------------------
-
-
+-------------------------------------------------------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## Implementation Plan
 -------------------------------------------------------------------------------------------------------------------------------
+
+### Global Installation Steps for Windows 11:
+
+1. **Build the package:**
+   ```bash
+   uv build --wheel
+   ```
+
+2. **Install globally using uv tool:**
+   ```bash
+   uv tool install dist/ocr-0.1.0-py3-none-any.whl
+   ```
+
+3. **Update shell PATH:**
+   ```bash
+   uv tool update-shell
+   ```
+
+4. **Verify installation:**
+   ```bash
+   ocr --help
+   ```
+
+5. **Test from any directory:**
+   ```bash
+   ocr process-file --file path/to/document.pdf
+   ```
+
+### Alternative: Development Installation
+For development, use:
+```bash
+uv pip install -e .
+```
+
+### Uninstall:
+```bash
+uv tool uninstall ocr
+```
+
+### Notes:
+- ✅ Global installation works with `uv tool install`
+- ✅ `ocr` command available from any terminal
+- ✅ OneDrive permission issues resolved by using local directory
+- ✅ Shell PATH automatically updated with `uv tool update-shell`
+- ✅ Tool installed to `C:\Users\leona\.local\bin\ocr.exe`
