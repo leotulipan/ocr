@@ -20,41 +20,38 @@ console = Console()
 @app.command()
 def process_file(
     file: Path = typer.Option(..., "--file", "-f", exists=True, help="File to process"),
-    output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory"),
-    save_at_input_location: bool = typer.Option(False, "--save-at-input", help="Save output at input file location"),
+    output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory (overrides default save at input location)"),
     include_page_headlines: bool = typer.Option(False, "--page-headlines", help="Include page numbers as markdown headlines"),
     page_pattern: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')")
 ):
     """Process a single file with OCR."""
-    asyncio.run(_process_file(file, output_dir, save_at_input_location, include_page_headlines, page_pattern))
+    asyncio.run(_process_file(file, output_dir, include_page_headlines, page_pattern))
 
 
 @app.command()
 def process_files(
     files: List[Path] = typer.Option(..., "--files", help="Files to process"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory"),
-    save_at_input_location: bool = typer.Option(False, "--save-at-input", help="Save output at input file location"),
     include_page_headlines: bool = typer.Option(False, "--page-headlines", help="Include page numbers as markdown headlines"),
     page_pattern: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')")
 ):
     """Process multiple files with OCR."""
-    asyncio.run(_process_files(files, output_dir, save_at_input_location, include_page_headlines, page_pattern))
+    asyncio.run(_process_files(files, output_dir, include_page_headlines, page_pattern))
 
 
 @app.command()
 def process_folder(
     folder: Path = typer.Option(..., "--folder", "-d", exists=True, help="Folder to process"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory"),
-    save_at_input_location: bool = typer.Option(False, "--save-at-input", help="Save output at input file location"),
     include_page_headlines: bool = typer.Option(False, "--page-headlines", help="Include page numbers as markdown headlines"),
     page_pattern: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')")
 ):
     """Process all supported files in a folder with OCR."""
-    asyncio.run(_process_folder(folder, output_dir, save_at_input_location, include_page_headlines, page_pattern))
+    asyncio.run(_process_folder(folder, output_dir, include_page_headlines, page_pattern))
 
 
 async def _process_file(file_path: Path, output_dir: Optional[Path] = None, 
-                       save_at_input_location: bool = False, include_page_headlines: bool = False,
+                       include_page_headlines: bool = False,
                        page_pattern: Optional[str] = None):
     """Process a single file."""
     try:
@@ -63,6 +60,8 @@ async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
         
         # Initialize OCR service
         ocr_service = MistralOCRAdapter(settings)
+        # Default: save at input location unless output_dir is provided
+        save_at_input_location = output_dir is None
         output_manager = OutputManager(output_dir, save_at_input_location)
         
         console.print(f"Processing file: [green]{file_path}[/green]")
@@ -90,7 +89,7 @@ async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
 
 
 async def _process_files(file_paths: List[Path], output_dir: Optional[Path] = None,
-                        save_at_input_location: bool = False, include_page_headlines: bool = False,
+                        include_page_headlines: bool = False,
                         page_pattern: Optional[str] = None):
     """Process multiple files."""
     try:
@@ -99,7 +98,8 @@ async def _process_files(file_paths: List[Path], output_dir: Optional[Path] = No
         
         # Initialize OCR service and output manager
         ocr_service = MistralOCRAdapter(settings)
-        output_manager = OutputManager(output_dir, save_at_input_location)
+        # For batch: default to project ocr_output unless user provided --output
+        output_manager = OutputManager(output_dir, save_at_input_location=False)
         
         console.print(f"Processing {len(file_paths)} files...")
         if page_pattern:
@@ -140,7 +140,7 @@ async def _process_files(file_paths: List[Path], output_dir: Optional[Path] = No
 
 
 async def _process_folder(folder_path: Path, output_dir: Optional[Path] = None,
-                         save_at_input_location: bool = False, include_page_headlines: bool = False,
+                         include_page_headlines: bool = False,
                          page_pattern: Optional[str] = None):
     """Process all supported files in a folder."""
     try:
@@ -149,7 +149,8 @@ async def _process_folder(folder_path: Path, output_dir: Optional[Path] = None,
         
         # Initialize OCR service and output manager
         ocr_service = MistralOCRAdapter(settings)
-        output_manager = OutputManager(output_dir, save_at_input_location)
+        # For folder: default to project ocr_output unless user provided --output
+        output_manager = OutputManager(output_dir, save_at_input_location=False)
         
         console.print(f"Processing folder: [green]{folder_path}[/green]")
         if page_pattern:
