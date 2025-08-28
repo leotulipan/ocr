@@ -163,3 +163,4 @@ cython_debug/
 .cursor/
 # Token files
 tokens/*
+ocr_output/*

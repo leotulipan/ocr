@@ -71,10 +71,10 @@ async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
             console.print("Including page headlines: [yellow]enabled[/yellow]")
         
         # Process file
-        result = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
+        result, api_images = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
         
         # Save result
-        output_file = output_manager.save_text_result(
+        output_file, saved_images = output_manager.save_text_result(
             result, 
             file_path.stem, 
             file_path,
@@ -82,6 +82,7 @@ async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
         )
         
         console.print(f"✓ Saved result to: [blue]{output_file}[/blue]")
+        console.print(f"📊 API returned {api_images} images, saved {saved_images} images")
         
     except Exception as e:
         console.print(f"❌ Error processing {file_path}: [red]{e}[/red]")
@@ -109,11 +110,13 @@ async def _process_files(file_paths: List[Path], output_dir: Optional[Path] = No
         
         # Process files with progress bar
         results = []
+        api_images_total = 0
         for file_path in track(file_paths, description="Processing files..."):
             try:
-                result = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
+                result, api_images = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
                 results.append(result)
-                console.print(f"✓ Processed [green]{file_path.name}[/green]")
+                api_images_total += api_images
+                console.print(f"✓ Processed [green]{file_path.name}[/green] ({api_images} images)")
             except Exception as e:
                 console.print(f"❌ Error processing {file_path.name}: [red]{e}[/red]")
                 results.append(f"Error processing {file_path.name}: {e}")
@@ -127,12 +130,16 @@ async def _process_files(file_paths: List[Path], output_dir: Optional[Path] = No
         table.add_column("File", style="cyan")
         table.add_column("Status", style="green")
         table.add_column("Output", style="blue")
+        table.add_column("Images", style="yellow")
         
-        for file_path, output_file in zip(file_paths, output_files):
+        saved_images_total = 0
+        for file_path, (output_file, saved_images) in zip(file_paths, output_files):
             status = "✓ Success" if "Error" not in str(output_file) else "❌ Error"
-            table.add_row(file_path.name, status, str(output_file))
+            table.add_row(file_path.name, status, str(output_file), str(saved_images))
+            saved_images_total += saved_images
         
         console.print(table)
+        console.print(f"📊 Total API images: {api_images_total}, Total saved images: {saved_images_total}")
         
     except Exception as e:
         console.print(f"❌ Error: [red]{e}[/red]")
@@ -168,21 +175,32 @@ async def _process_folder(folder_path: Path, output_dir: Optional[Path] = None,
             if f.is_file() and f.suffix.lower() in supported_extensions
         ]
         
+        # Extract markdown content and count total API images
+        markdown_results = []
+        api_images_total = 0
+        for result, api_images in results:
+            markdown_results.append(result)
+            api_images_total += api_images
+        
         # Save results
         filenames = [f.stem for f in processed_files]
-        output_files = output_manager.save_batch_results(results, filenames, processed_files, include_page_headlines)
+        output_files = output_manager.save_batch_results(markdown_results, filenames, processed_files, include_page_headlines)
         
         # Create summary table
         table = Table(title="Folder Processing Results")
         table.add_column("File", style="cyan")
         table.add_column("Status", style="green")
         table.add_column("Output", style="blue")
+        table.add_column("Images", style="yellow")
         
-        for file_path, output_file in zip(processed_files, output_files):
+        saved_images_total = 0
+        for file_path, (output_file, saved_images) in zip(processed_files, output_files):
             status = "✓ Success" if "Error" not in str(output_file) else "❌ Error"
-            table.add_row(file_path.name, status, str(output_file))
+            table.add_row(file_path.name, status, str(output_file), str(saved_images))
+            saved_images_total += saved_images
         
         console.print(table)
+        console.print(f"📊 Total API images: {api_images_total}, Total saved images: {saved_images_total}")
         
     except Exception as e:
         console.print(f"❌ Error: [red]{e}[/red]")

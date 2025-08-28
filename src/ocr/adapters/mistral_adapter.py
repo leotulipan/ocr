@@ -4,6 +4,7 @@ import base64
 from pathlib import Path
 from typing import List, Optional, Set
 from mistralai import Mistral, OCRResponse
+import json
 
 from ..protocols.ocr_service import OCRService
 from ..models.settings import Settings
@@ -18,9 +19,36 @@ class MistralOCRAdapter(OCRService):
         self.client = Mistral(api_key=settings.mistral_api_key.get_secret_value())
         self.settings = settings
     
+    def _validate_image_file(self, file_path: Path) -> bool:
+        """Validate that the file is a valid image file."""
+        try:
+            with open(file_path, "rb") as file:
+                header = file.read(10)  # Read first 10 bytes
+                
+            ext = file_path.suffix.lower()
+            if ext in ['.jpg', '.jpeg']:
+                # Check for JPEG header: FF D8 FF
+                return header.startswith(b'\xff\xd8\xff')
+            elif ext == '.png':
+                # Check for PNG header: 89 50 4E 47 0D 0A 1A 0A
+                return header.startswith(b'\x89PNG\r\n\x1a\n')
+            elif ext == '.avif':
+                # Check for AVIF header: 00 00 00 20 66 74 79 70 61 76 69 66
+                return header.startswith(b'\x00\x00\x00 ftypavif')
+            else:
+                # For other formats, assume valid
+                return True
+        except Exception:
+            return False
+    
     def _encode_file(self, file_path: Path) -> str:
         """Encode file to base64."""
         try:
+            # Validate image files before encoding
+            if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.avif']:
+                if not self._validate_image_file(file_path):
+                    raise ValueError(f"Invalid or corrupted image file: {file_path}")
+            
             with open(file_path, "rb") as file:
                 return base64.b64encode(file.read()).decode('utf-8')
         except FileNotFoundError:
@@ -37,6 +65,16 @@ class MistralOCRAdapter(OCRService):
             return "image_url"
         else:
             raise ValueError(f"Unsupported file type: {ext}")
+    
+    def _get_url_field_name(self, file_path: Path) -> str:
+        """Get the correct URL field name based on document type."""
+        doc_type = self._get_document_type(file_path)
+        if doc_type == "document_url":
+            return "document_url"
+        elif doc_type == "image_url":
+            return "image_url"
+        else:
+            raise ValueError(f"Unsupported document type: {doc_type}")
     
     def _get_mime_type(self, file_path: Path) -> str:
         """Get MIME type based on file extension."""
@@ -66,8 +104,63 @@ class MistralOCRAdapter(OCRService):
         # The actual filtering will be done in the markdown generation
         return response
     
+    def _collect_images_map(self, response: OCRResponse, pages_to_process: list[int]) -> tuple[dict, int]:
+        """Collect a mapping of image filename -> {mime, base64} from the OCR response pages."""
+        images_map = {}
+        total_images = 0
+        print(f"DEBUG: Processing {len(pages_to_process)} pages")
+        for i in pages_to_process:
+            page = response.pages[i]
+            images = getattr(page, "images", []) or []
+            print(f"DEBUG: Page {i+1} has {len(images)} images")
+            total_images += len(images)
+            for j, img in enumerate(images):
+                print(f"DEBUG: Image {j} on page {i+1}: {type(img)}")
+                # Try different attribute names for OCRImageObject
+                filename = getattr(img, "filename", None) or getattr(img, "name", None) or getattr(img, "id", None)
+                # According to Mistral documentation, image data is in image_base64 attribute
+                b64 = getattr(img, "image_base64", None) or getattr(img, "base64", None)
+                mime = getattr(img, "mime", None) or getattr(img, "content_type", None)
+                # Extract base64 data from data URL if present
+                if b64 and b64.startswith('data:'):
+                    if ';base64,' in b64:
+                        b64 = b64.split(';base64,', 1)[1]
+                    else:
+                        continue
+                
+                if not b64:
+                    continue
+                # Generate filename if not present
+                if not filename:
+                    # Use MIME type to determine extension
+                    if mime and "/" in mime:
+                        mime_ext = mime.split("/")[-1]
+                        if mime_ext == "jpeg":
+                            ext = "jpg"
+                        elif mime_ext == "png":
+                            ext = "png"
+                        elif mime_ext == "avif":
+                            ext = "avif"
+                        else:
+                            ext = mime_ext
+                    else:
+                        ext = "jpg"  # Default to jpg
+                    filename = f"img-{j}.{ext}"
+                if not mime:
+                    if filename.lower().endswith((".jpg", ".jpeg")):
+                        mime = "image/jpeg"
+                    elif filename.lower().endswith(".png"):
+                        mime = "image/png"
+                    elif filename.lower().endswith(".avif"):
+                        mime = "image/avif"
+                    else:
+                        mime = "image/jpeg"  # Default to jpeg
+                images_map[filename] = {"mime": mime, "base64": b64}
+        print(f"DEBUG: Total images collected: {len(images_map)}")
+        return images_map, total_images
+
     def _generate_markdown(self, response: OCRResponse, page_pattern: Optional[str] = None, 
-                          include_page_headlines: bool = False) -> str:
+                          include_page_headlines: bool = False) -> tuple[str, int]:
         """Generate markdown from OCR response with optional filtering and headlines."""
         if not page_pattern:
             # Process all pages
@@ -79,22 +172,27 @@ class MistralOCRAdapter(OCRService):
             pages_to_process = [i for i in range(len(response.pages)) if i + 1 in selected_pages]
         
         if not pages_to_process:
-            return "No pages match the specified pattern."
+            return "No pages match the specified pattern.", 0
         
         markdown_parts = []
         for i in pages_to_process:
             page_num = i + 1  # Convert to 1-indexed
             page_content = response.pages[i].markdown
-            
             if include_page_headlines:
                 markdown_parts.append(f"### Page {page_num}\n{page_content}")
             else:
                 markdown_parts.append(page_content)
-        
-        return "\n\n".join(markdown_parts)
+
+        markdown_body = "\n\n".join(markdown_parts)
+        # Prepend images map as an HTML comment block for OutputManager to consume
+        images_map, total_images = self._collect_images_map(response, pages_to_process)
+        if images_map:
+            header = f"<!--IMAGES_MAP\n{json.dumps(images_map)}\n-->\n\n"
+            return header + markdown_body, total_images
+        return markdown_body, total_images
     
     async def process_file(self, file_path: Path, page_pattern: Optional[str] = None, 
-                          include_page_headlines: bool = False) -> str:
+                          include_page_headlines: bool = False) -> tuple[str, int]:
         """Process a single file and return extracted text."""
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
@@ -106,28 +204,29 @@ class MistralOCRAdapter(OCRService):
         # Encode file to base64
         base64_content = self._encode_file(file_path)
         document_type = self._get_document_type(file_path)
+        url_field = self._get_url_field_name(file_path)
         mime_type = self._get_mime_type(file_path)
         
-        # Create document URL with base64 content
-        document_url = f"data:{mime_type};base64,{base64_content}"
+        # Create data URL with base64 content
+        data_url = f"data:{mime_type};base64,{base64_content}"
         
         # Process with Mistral OCR
+        document_dict = {"type": document_type}
+        document_dict[url_field] = data_url
+        
         response: OCRResponse = self.client.ocr.process(
             model="mistral-ocr-latest",
-            document={
-                "type": document_type,
-                "document_url": document_url,
-            },
+            document=document_dict,
             include_image_base64=True
         )
         
         # Generate markdown with optional filtering and headlines
-        markdown = self._generate_markdown(response, page_pattern, include_page_headlines)
+        markdown, total_images = self._generate_markdown(response, page_pattern, include_page_headlines)
         
-        return markdown
+        return markdown, total_images
     
     async def process_files(self, file_paths: List[Path], page_pattern: Optional[str] = None,
-                           include_page_headlines: bool = False) -> List[str]:
+                           include_page_headlines: bool = False) -> List[tuple[str, int]]:
         """Process multiple files and return extracted text for each."""
         results = []
         for file_path in file_paths:
@@ -137,11 +236,11 @@ class MistralOCRAdapter(OCRService):
             except Exception as e:
                 # Log error but continue with other files
                 print(f"Error processing {file_path}: {e}")
-                results.append(f"Error processing {file_path}: {e}")
+                results.append((f"Error processing {file_path}: {e}", 0))
         return results
     
     async def process_folder(self, folder_path: Path, page_pattern: Optional[str] = None,
-                            include_page_headlines: bool = False) -> List[str]:
+                            include_page_headlines: bool = False) -> List[tuple[str, int]]:
         """Process all supported files in a folder and return extracted text."""
         if not folder_path.exists():
             raise FileNotFoundError(f"Folder not found: {folder_path}")
