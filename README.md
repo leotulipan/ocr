@@ -76,40 +76,47 @@ MISTRAL_API_KEY=your-mistral-api-key-here
 
 ```bash
 # Process a single file
-ocr process-file --file document.pdf
+ocr document.pdf
 
 # Process multiple files
-ocr process-files --files file1.pdf file2.pdf file3.pdf
+ocr invoice1.pdf invoice2.pdf receipt.pdf
 
 # Process all files in a folder
-ocr process-folder --folder /path/to/documents
+ocr ./invoices/
+
+# Process files matching a pattern (shell expansion)
+ocr *.pdf
+ocr docs/**/*.pdf
 ```
 
 ### Page Selection
 
 ```bash
 # Process specific pages
-ocr process-file --file document.pdf --pages "1-3"
+ocr document.pdf --pages "1-3"
 
 # Process page ranges
-ocr process-file --file document.pdf --pages "1-5,10-15"
+ocr document.pdf --pages "1-5,10-15"
 
 # Process from page 5 to end
-ocr process-file --file document.pdf --pages "5-"
+ocr document.pdf --pages "5-"
 
 # Include page numbers as headlines
-ocr process-file --file document.pdf --page-headlines
+ocr document.pdf --page-headlines
 ```
 
 ### Output Options
 
 ```bash
 # Save to specific directory
-ocr process-file --file document.pdf --output /path/to/output
+ocr document.pdf --output /path/to/output
 
-# By default, single files save in .ocr subdirectory:
-# document.pdf → .ocr/document.pg1.md (single page)
-# document.pdf → .ocr/document.md (multiple pages)
+# By default:
+# - Single files save in .ocr subdirectory next to source
+# - Multiple files save to ocr_output/ directory
+#
+# Single page: document.pdf → .ocr/document.pg1.md
+# Multi-page: document.pdf → .ocr/document.md
 ```
 
 ## Intelligent Filename Generation
@@ -131,19 +138,22 @@ The tool can analyze document content and generate descriptive filenames followi
 
 ```bash
 # Generate and apply intelligent filename
-ocr process-file --file invoice.pdf --rename
+ocr invoice.pdf --rename
 
 # Preview suggested filename (dry-run)
-ocr process-file --file invoice.pdf --dry-run
+ocr invoice.pdf --dry-run
 
 # Ask for confirmation before renaming
-ocr process-file --file invoice.pdf --rename --confirm
+ocr invoice.pdf --rename --confirm
 
 # Force regenerate filename (ignore cache)
-ocr process-file --file invoice.pdf --rename --force
+ocr invoice.pdf --rename --force
 
 # Batch rename all files in a folder
-ocr process-folder --folder ./invoices --rename
+ocr ./invoices/ --rename
+
+# Batch rename with confirmation
+ocr ./invoices/ --rename --confirm
 ```
 
 ### How It Works
@@ -210,46 +220,50 @@ filename_metadata:
 - **Documents**: PDF, PPTX, DOCX
 - **Images**: PNG, JPG, JPEG, AVIF
 
-## Commands Reference
+## Command Reference
 
-### process-file
+### Main Command
 
-Process a single file with OCR.
+Process documents with OCR. Accepts files, folders, or shell glob patterns.
 
 ```bash
-ocr process-file [OPTIONS]
+ocr [FILES_OR_FOLDERS...] [OPTIONS]
 ```
+
+**Arguments:**
+- `FILES_OR_FOLDERS` - One or more files or folders to process
 
 **Options:**
-- `--file, -f PATH` - File to process (required)
-- `--output, -o PATH` - Output directory (optional)
-- `--page-headlines` - Include page numbers as markdown headlines
+- `-o, --output PATH` - Output directory (default: .ocr/ for single file, ocr_output/ for multiple)
 - `--pages TEXT` - Page pattern (e.g., '1-3', '5-', '4,5')
-- `--rename` - Enable intelligent filename generation
-- `--dry-run` - Show suggested filename without renaming
-- `--confirm` - Ask for confirmation before renaming
-- `--force` - Force regenerate filename even if cached
-
-### process-files
-
-Process multiple files with OCR.
-
-```bash
-ocr process-files --files FILE1 FILE2 ... [OPTIONS]
-```
-
-### process-folder
-
-Process all supported files in a folder.
-
-```bash
-ocr process-folder --folder PATH [OPTIONS]
-```
-
-### Global Options
-
-- `--version, -v` - Show version and exit
+- `--page-headlines` - Include page numbers as markdown headlines
+- `--rename` - Enable intelligent filename generation and renaming
+- `--dry-run` - Show suggested filenames without renaming
+- `--confirm` - Ask for confirmation before operations
+- `--force` - Force regenerate filenames even if cached
+- `-v, --version` - Show version and exit
 - `--help` - Show help message
+
+**Examples:**
+```bash
+# Single file
+ocr document.pdf
+
+# Multiple files
+ocr file1.pdf file2.pdf file3.pdf
+
+# Entire folder
+ocr ./invoices/
+
+# Shell glob patterns
+ocr *.pdf
+ocr documents/**/*.pdf
+
+# With options
+ocr document.pdf --pages "1-5" --page-headlines
+ocr ./invoices/ --rename --confirm
+ocr *.pdf --dry-run
+```
 
 ## Cost & Performance
 
@@ -272,8 +286,8 @@ ocr process-folder --folder PATH [OPTIONS]
 ### Example 1: Basic OCR Workflow
 
 ```bash
-# Process a document
-ocr process-file --file contract.pdf
+# Process a single document
+ocr contract.pdf
 
 # Output: .ocr/contract.pg1.md or .ocr/contract.md
 ```
@@ -282,7 +296,7 @@ ocr process-file --file contract.pdf
 
 ```bash
 # Generate smart filename
-ocr process-file --file scan001.pdf --rename
+ocr scan001.pdf --rename
 
 # Before: scan001.pdf
 # After:  2024-12-01 - Acme Corp - Service Agreement.pdf
@@ -292,7 +306,7 @@ ocr process-file --file scan001.pdf --rename
 
 ```bash
 # Process and rename all PDFs in a folder
-ocr process-folder --folder ./invoices --rename
+ocr ./invoices/ --rename
 
 # Each file gets a descriptive name based on its content
 ```
@@ -301,9 +315,19 @@ ocr process-folder --folder ./invoices --rename
 
 ```bash
 # See what the filename would be without changing anything
-ocr process-file --file document.pdf --dry-run
+ocr document.pdf --dry-run
 
 # Output: Suggested filename: 2024-09-15 - Company - Report.pdf
+```
+
+### Example 5: Process Multiple Files with Glob Pattern
+
+```bash
+# Process all PDFs in current directory
+ocr *.pdf
+
+# Process PDFs in multiple locations
+ocr invoices/*.pdf receipts/*.pdf
 ```
 
 ## Troubleshooting
@@ -357,7 +381,7 @@ uv tool uninstall ocr
 uv build --wheel
 
 # Install from wheel
-uv tool install dist/ocr-0.2.2-py3-none-any.whl
+uv tool install dist/ocr-0.3.0-py3-none-any.whl
 ```
 
 ### Running Tests
@@ -380,7 +404,14 @@ pytest
 
 ## Version History
 
-### v0.2.2 (Current)
+### v0.3.0 (Current)
+- **🎉 Simplified CLI**: Removed subcommands - just use `ocr file.pdf` instead of `ocr process-file --file file.pdf`
+- **Unified command**: Single command handles files, folders, and glob patterns automatically
+- **Batch rename support**: `--rename` now works for multiple files and folders
+- **Batch confirmation**: `--confirm` flag now prompts before processing multiple files
+- **Breaking change**: Old commands (`process-file`, `process-files`, `process-folder`) removed
+
+### v0.2.2
 - **New `.ocr` subdirectory structure**: All OCR markdown files now saved in `.ocr` subdirectory for better organization
 - **Page-based naming**: Single-page documents use `.pg1.md` suffix, multi-page use `.md` suffix
 - **Original filename tracking**: Added `original_filename` field in metadata to preserve pre-rename filenames
