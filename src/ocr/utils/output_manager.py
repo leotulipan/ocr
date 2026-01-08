@@ -3,11 +3,14 @@
 import json
 import re
 import base64
+import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 import urllib.request
 import urllib.parse
+
+from ..models.metadata import OCRMetadata, FilenameMetadata
 
 
 class OutputManager:
@@ -171,8 +174,9 @@ class OutputManager:
             updated = file_img_re.sub(replace_file_link, updated)
         return updated, saved_count
     
-    def save_text_result(self, content: str, filename: str, source_file: Path = None, 
-                        include_page_headlines: bool = False) -> tuple[Path, int]:
+    def save_text_result(self, content: str, filename: str, source_file: Path = None,
+                        include_page_headlines: bool = False,
+                        filename_metadata: Optional[FilenameMetadata] = None) -> tuple[Path, int]:
         """Save OCR text result to file and materialize image references (base64 and URLs)."""
         # Determine output location
         if self.save_at_input_location and source_file:
@@ -185,28 +189,32 @@ class OutputManager:
             output_file = output_dir / f"{timestamp}_{filename}.md"
             # Use provided filename as prefix when saving to common output dir
             prefix = filename
-        
+
         # Create output directory if it doesn't exist
         output_dir.mkdir(exist_ok=True)
-        
+
         # Materialize images and rewrite markdown
         updated_content, img_count = self._materialize_images(content, output_dir, prefix)
-        
-        # Add metadata header
-        metadata = {
-            "source_file": str(source_file) if source_file else None,
-            "processed_at": datetime.now().isoformat(),
-            "content_length": len(updated_content),
-            "include_page_headlines": include_page_headlines,
-            "images_saved": img_count
-        }
-        
-        header = f"<!--\n{json.dumps(metadata, indent=2)}\n-->\n\n"
-        
+
+        # Create metadata object
+        metadata = OCRMetadata(
+            source_file=str(source_file) if source_file else None,
+            processed_at=datetime.now(),
+            content_length=len(updated_content),
+            include_page_headlines=include_page_headlines,
+            images_saved=img_count,
+            filename_metadata=filename_metadata
+        )
+
+        # Serialize to YAML frontmatter
+        yaml_dict = metadata.to_yaml_dict()
+        yaml_content = yaml.dump(yaml_dict, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        header = f"---\n{yaml_content}---\n\n"
+
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(header)
             f.write(updated_content)
-        
+
         return output_file, img_count
     
     def save_batch_results(self, results: List[str], filenames: List[str], 

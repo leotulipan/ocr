@@ -224,7 +224,13 @@ class MistralOCRAdapter(OCRService):
         markdown, total_images = self._generate_markdown(response, page_pattern, include_page_headlines)
         
         return markdown, total_images
-    
+
+    async def process_first_page(self, file_path: Path,
+                                 include_page_headlines: bool = False) -> tuple[str, int]:
+        """Process only first page for filename generation analysis."""
+        return await self.process_file(file_path, page_pattern="1",
+                                      include_page_headlines=include_page_headlines)
+
     async def process_files(self, file_paths: List[Path], page_pattern: Optional[str] = None,
                            include_page_headlines: bool = False) -> List[tuple[str, int]]:
         """Process multiple files and return extracted text for each."""

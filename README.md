@@ -2,6 +2,13 @@
 
 A command-line OCR tool using Mistral AI for document processing.
 
+Relevant Links:
+
+- https://colab.research.google.com/github/mistralai/cookbook/blob/main/mistral/ocr/tool_usage.ipynb
+- https://colab.research.google.com/github/mistralai/cookbook/blob/main/mistral/ocr/batch_ocr.ipynb#scrollTo=qmXyB3rPlXQW
+- https://docs.mistral.ai/capabilities/document_ai/basic_ocr/#ocr-with-pdf
+- https://www.cohorte.co/blog/mistral-ocr-a-deep-dive-into-next-generation-document-understanding
+
 ### Installation
 
 This project uses [uv](https://github.com/astral-sh/uv) for dependency management.

@@ -8,13 +8,33 @@ from rich.console import Console
 from rich.progress import track
 from rich.table import Table
 
+from . import __version__
 from .models.settings import Settings
 from .adapters.mistral_adapter import MistralOCRAdapter
 from .utils.output_manager import OutputManager
+from .services.filename_generator import FilenameGenerator
+from .utils.cache_manager import CacheManager
+from .utils.file_renamer import FileRenamer
+
+
+def version_callback(value: bool):
+    """Show version and exit."""
+    if value:
+        console = Console()
+        console.print(f"OCR version: [cyan]{__version__}[/cyan]")
+        raise typer.Exit()
 
 
 app = typer.Typer()
 console = Console()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(None, "--version", "-v", callback=version_callback, is_eager=True, help="Show version and exit")
+):
+    """OCR CLI - Process documents with Mistral AI."""
+    pass
 
 
 @app.command()
@@ -22,10 +42,14 @@ def process_file(
     file: Path = typer.Option(..., "--file", "-f", exists=True, help="File to process"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory (overrides default save at input location)"),
     include_page_headlines: bool = typer.Option(False, "--page-headlines", help="Include page numbers as markdown headlines"),
-    page_pattern: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')")
+    page_pattern: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')"),
+    rename: bool = typer.Option(False, "--rename", help="Enable intelligent filename generation and renaming"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show suggested filename without renaming"),
+    confirm: bool = typer.Option(False, "--confirm", help="Ask for confirmation before renaming"),
+    force: bool = typer.Option(False, "--force", help="Force regenerate filename even if cached")
 ):
     """Process a single file with OCR."""
-    asyncio.run(_process_file(file, output_dir, include_page_headlines, page_pattern))
+    asyncio.run(_process_file(file, output_dir, include_page_headlines, page_pattern, rename, dry_run, confirm, force))
 
 
 @app.command()
@@ -33,10 +57,14 @@ def process_files(
     files: List[Path] = typer.Option(..., "--files", help="Files to process"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory"),
     include_page_headlines: bool = typer.Option(False, "--page-headlines", help="Include page numbers as markdown headlines"),
-    page_pattern: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')")
+    page_pattern: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')"),
+    rename: bool = typer.Option(False, "--rename", help="Enable intelligent filename generation and renaming"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show suggested filenames without renaming"),
+    confirm: bool = typer.Option(False, "--confirm", help="Ask for confirmation before renaming"),
+    force: bool = typer.Option(False, "--force", help="Force regenerate filenames even if cached")
 ):
     """Process multiple files with OCR."""
-    asyncio.run(_process_files(files, output_dir, include_page_headlines, page_pattern))
+    asyncio.run(_process_files(files, output_dir, include_page_headlines, page_pattern, rename, dry_run, confirm, force))
 
 
 @app.command()
@@ -44,46 +72,123 @@ def process_folder(
     folder: Path = typer.Option(..., "--folder", "-d", exists=True, help="Folder to process"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="Output directory"),
     include_page_headlines: bool = typer.Option(False, "--page-headlines", help="Include page numbers as markdown headlines"),
-    page_pattern: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')")
+    page_pattern: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')"),
+    rename: bool = typer.Option(False, "--rename", help="Enable intelligent filename generation and renaming"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show suggested filenames without renaming"),
+    confirm: bool = typer.Option(False, "--confirm", help="Ask for confirmation before renaming"),
+    force: bool = typer.Option(False, "--force", help="Force regenerate filenames even if cached")
 ):
     """Process all supported files in a folder with OCR."""
-    asyncio.run(_process_folder(folder, output_dir, include_page_headlines, page_pattern))
+    asyncio.run(_process_folder(folder, output_dir, include_page_headlines, page_pattern, rename, dry_run, confirm, force))
 
 
-async def _process_file(file_path: Path, output_dir: Optional[Path] = None, 
+async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
                        include_page_headlines: bool = False,
-                       page_pattern: Optional[str] = None):
-    """Process a single file."""
+                       page_pattern: Optional[str] = None,
+                       rename: bool = False,
+                       dry_run: bool = False,
+                       confirm: bool = False,
+                       force: bool = False):
+    """Process a single file with optional filename generation."""
     try:
         # Load settings
         settings = Settings()
-        
+
         # Initialize OCR service
         ocr_service = MistralOCRAdapter(settings)
         # Default: save at input location unless output_dir is provided
         save_at_input_location = output_dir is None
         output_manager = OutputManager(output_dir, save_at_input_location)
-        
+
+        filename_metadata = None
+        markdown_content = None
+
+        # Filename generation workflow
+        if rename or dry_run:
+            console.print(f"[yellow]Filename generation mode enabled[/yellow]")
+
+            # Step 1: Check cache
+            cached_filename = CacheManager.get_cached_filename(file_path, force=force)
+            if cached_filename and not force:
+                console.print(f"[green]Using cached filename:[/green] {cached_filename.generated_filename}")
+                filename_metadata = cached_filename
+            else:
+                # Step 2: Try to get cached markdown to avoid re-OCR
+                markdown_content = CacheManager.get_cached_markdown(file_path)
+
+                if not markdown_content:
+                    # Step 3: OCR first page only
+                    console.print("[yellow]Processing first page for analysis...[/yellow]")
+                    markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
+
+                # Step 4: Generate filename
+                console.print("[yellow]Analyzing content for filename generation...[/yellow]")
+                filename_generator = FilenameGenerator(settings)
+                filename_metadata = await filename_generator.analyze_content(markdown_content, pages_analyzed=1)
+
+                console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
+                console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
+
+                # Step 5: Check if first page analysis was sufficient
+                if filename_metadata.confidence == "low":
+                    console.print("[yellow]Low confidence, processing all pages...[/yellow]")
+                    full_markdown, _ = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
+                    filename_metadata = await filename_generator.analyze_content(full_markdown, pages_analyzed=-1)
+                    console.print(f"[green]Updated filename:[/green] {filename_metadata.generated_filename}")
+                    markdown_content = full_markdown
+
+            # Step 6: Handle dry-run
+            if dry_run:
+                console.print(f"\n[yellow]DRY RUN - No files will be renamed[/yellow]")
+                new_name = filename_generator.generate_filename_with_extension(
+                    filename_metadata.generated_filename, file_path
+                )
+                console.print(f"[green]Suggested filename:[/green] {new_name}")
+                return
+
+            # Step 7: Handle confirmation
+            if confirm:
+                if not FileRenamer.confirm_rename(file_path, filename_metadata.generated_filename):
+                    console.print("[yellow]Rename cancelled by user[/yellow]")
+                    rename = False
+
+        # Standard OCR processing
         console.print(f"Processing file: [green]{file_path}[/green]")
         if page_pattern:
             console.print(f"Page pattern: [yellow]{page_pattern}[/yellow]")
         if include_page_headlines:
             console.print("Including page headlines: [yellow]enabled[/yellow]")
-        
-        # Process file
-        result, api_images = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
-        
-        # Save result
+
+        # Process file normally if not using cached markdown
+        if not markdown_content:
+            result, api_images = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
+        else:
+            result = markdown_content
+            api_images = 0  # Already counted from cache
+
+        # Save result with filename metadata
         output_file, saved_images = output_manager.save_text_result(
-            result, 
-            file_path.stem, 
+            result,
+            file_path.stem,
             file_path,
-            include_page_headlines
+            include_page_headlines,
+            filename_metadata=filename_metadata
         )
-        
+
         console.print(f"✓ Saved result to: [blue]{output_file}[/blue]")
         console.print(f"📊 API returned {api_images} images, saved {saved_images} images")
-        
+
+        # Perform rename if requested
+        if rename and filename_metadata:
+            console.print("\n[yellow]Renaming files...[/yellow]")
+            new_source, new_ocr = FileRenamer.rename_file_pair(
+                file_path,
+                filename_metadata.generated_filename,
+                dry_run=False
+            )
+            console.print(f"✓ Renamed to: [green]{new_source.name}[/green]")
+            console.print(f"✓ OCR file: [green]{new_ocr.name}[/green]")
+
     except Exception as e:
         console.print(f"❌ Error processing {file_path}: [red]{e}[/red]")
         raise typer.Exit(1)
@@ -91,7 +196,11 @@ async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
 
 async def _process_files(file_paths: List[Path], output_dir: Optional[Path] = None,
                         include_page_headlines: bool = False,
-                        page_pattern: Optional[str] = None):
+                        page_pattern: Optional[str] = None,
+                        rename: bool = False,
+                        dry_run: bool = False,
+                        confirm: bool = False,
+                        force: bool = False):
     """Process multiple files."""
     try:
         # Load settings
@@ -148,7 +257,11 @@ async def _process_files(file_paths: List[Path], output_dir: Optional[Path] = No
 
 async def _process_folder(folder_path: Path, output_dir: Optional[Path] = None,
                          include_page_headlines: bool = False,
-                         page_pattern: Optional[str] = None):
+                         page_pattern: Optional[str] = None,
+                         rename: bool = False,
+                         dry_run: bool = False,
+                         confirm: bool = False,
+                         force: bool = False):
     """Process all supported files in a folder."""
     try:
         # Load settings
