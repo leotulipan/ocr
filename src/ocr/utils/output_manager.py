@@ -176,29 +176,42 @@ class OutputManager:
     
     def save_text_result(self, content: str, filename: str, source_file: Path = None,
                         include_page_headlines: bool = False,
-                        filename_metadata: Optional[FilenameMetadata] = None) -> tuple[Path, int]:
+                        filename_metadata: Optional[FilenameMetadata] = None,
+                        pages_processed: int = 1) -> tuple[Path, int]:
         """Save OCR text result to file and materialize image references (base64 and URLs)."""
-        # Determine output location
+        # Determine output location - always save in .ocr subdirectory
         if self.save_at_input_location and source_file:
-            output_dir = source_file.parent
-            output_file = output_dir / f"{source_file.stem}_ocr.md"
+            base_dir = source_file.parent
+            output_dir = base_dir / ".ocr"
+            # Determine filename based on page count
+            if pages_processed == 1:
+                output_file = output_dir / f"{source_file.stem}.pg1.md"
+            else:
+                output_file = output_dir / f"{source_file.stem}.md"
             prefix = source_file.stem
         else:
-            output_dir = self.output_dir
+            output_dir = self.output_dir / ".ocr"
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = output_dir / f"{timestamp}_{filename}.md"
+            if pages_processed == 1:
+                output_file = output_dir / f"{timestamp}_{filename}.pg1.md"
+            else:
+                output_file = output_dir / f"{timestamp}_{filename}.md"
             # Use provided filename as prefix when saving to common output dir
             prefix = filename
 
         # Create output directory if it doesn't exist
-        output_dir.mkdir(exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # Materialize images and rewrite markdown
         updated_content, img_count = self._materialize_images(content, output_dir, prefix)
 
+        # Store original filename
+        original_filename = source_file.name if source_file else None
+
         # Create metadata object
         metadata = OCRMetadata(
             source_file=str(source_file) if source_file else None,
+            original_filename=original_filename,
             processed_at=datetime.now(),
             content_length=len(updated_content),
             include_page_headlines=include_page_headlines,

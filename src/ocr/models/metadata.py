@@ -23,6 +23,7 @@ class OCRMetadata(BaseModel):
     """Complete metadata for OCR output files."""
 
     source_file: Optional[str] = None
+    original_filename: Optional[str] = None  # Original filename before any renaming
     processed_at: datetime
     content_length: int
     include_page_headlines: bool = False
@@ -41,6 +42,7 @@ class OCRMetadata(BaseModel):
 
         return cls(
             source_file=data.get("source_file"),
+            original_filename=data.get("original_filename"),
             processed_at=processed_at,
             content_length=data.get("content_length", 0),
             include_page_headlines=data.get("include_page_headlines", False),
@@ -52,6 +54,7 @@ class OCRMetadata(BaseModel):
         """Convert to dictionary for YAML serialization."""
         result = {
             "source_file": self.source_file,
+            "original_filename": self.original_filename,
             "processed_at": self.processed_at.isoformat(),
             "content_length": self.content_length,
             "include_page_headlines": self.include_page_headlines,

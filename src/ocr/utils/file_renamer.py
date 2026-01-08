@@ -38,24 +38,52 @@ class FileRenamer:
         dry_run: bool = False
     ) -> Tuple[Optional[Path], Optional[Path]]:
         """
-        Rename both original file and its OCR markdown file.
+        Rename both original file and its OCR markdown file in .ocr subdirectory.
 
         Returns:
             (new_source_path, new_ocr_path) or (None, None) if dry run
         """
-        # Construct new paths
+        # Construct new path for source file
         new_source_path = source_file.parent / f"{new_basename}{source_file.suffix}"
-        ocr_file = source_file.parent / f"{source_file.stem}_ocr.md"
-        new_ocr_path = source_file.parent / f"{new_basename}_ocr.md"
+
+        # Find OCR file in .ocr subdirectory
+        ocr_dir = source_file.parent / ".ocr"
+        ocr_file = None
+        new_ocr_path = None
+
+        if ocr_dir.exists():
+            # Check for .pg1.md first, then .md
+            pg1_file = ocr_dir / f"{source_file.stem}.pg1.md"
+            md_file = ocr_dir / f"{source_file.stem}.md"
+
+            if pg1_file.exists():
+                ocr_file = pg1_file
+                new_ocr_path = ocr_dir / f"{new_basename}.pg1.md"
+            elif md_file.exists():
+                ocr_file = md_file
+                new_ocr_path = ocr_dir / f"{new_basename}.md"
+        else:
+            # Fall back to old location for backward compatibility
+            old_ocr = source_file.parent / f"{source_file.stem}_ocr.md"
+            if old_ocr.exists():
+                ocr_file = old_ocr
+                new_ocr_path = source_file.parent / f"{new_basename}_ocr.md"
 
         # Resolve collisions
         new_source_path = FileRenamer.resolve_collision(new_source_path)
 
         # If collision was resolved, update OCR path accordingly
-        if new_source_path.stem != new_basename:
-            new_ocr_path = source_file.parent / f"{new_source_path.stem}_ocr.md"
+        if new_ocr_path and new_source_path.stem != new_basename:
+            if ocr_file and ocr_file.parent == ocr_dir:
+                # Update OCR path in .ocr directory
+                suffix = ".pg1.md" if ocr_file.name.endswith(".pg1.md") else ".md"
+                new_ocr_path = ocr_dir / f"{new_source_path.stem}{suffix}"
+            else:
+                # Old location
+                new_ocr_path = source_file.parent / f"{new_source_path.stem}_ocr.md"
 
-        new_ocr_path = FileRenamer.resolve_collision(new_ocr_path)
+        if new_ocr_path:
+            new_ocr_path = FileRenamer.resolve_collision(new_ocr_path)
 
         if dry_run:
             return (new_source_path, new_ocr_path)
@@ -65,7 +93,7 @@ class FileRenamer:
             source_file.rename(new_source_path)
 
             # Rename OCR file if exists
-            if ocr_file.exists():
+            if ocr_file and ocr_file.exists() and new_ocr_path:
                 ocr_file.rename(new_ocr_path)
 
             return (new_source_path, new_ocr_path)

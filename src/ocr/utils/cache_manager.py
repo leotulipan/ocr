@@ -16,10 +16,24 @@ class CacheManager:
     @staticmethod
     def get_cached_ocr_file(source_file: Path) -> Optional[Path]:
         """Find existing OCR markdown file for source file."""
-        # Check in same directory as source file
-        ocr_file = source_file.parent / f"{source_file.stem}_ocr.md"
-        if ocr_file.exists():
-            return ocr_file
+        # Check in .ocr subdirectory
+        ocr_dir = source_file.parent / ".ocr"
+        if not ocr_dir.exists():
+            # Fall back to old location for backward compatibility
+            ocr_file = source_file.parent / f"{source_file.stem}_ocr.md"
+            if ocr_file.exists():
+                return ocr_file
+            return None
+
+        # Check for .pg1.md (single page) first, then .md (multi-page)
+        pg1_file = ocr_dir / f"{source_file.stem}.pg1.md"
+        if pg1_file.exists():
+            return pg1_file
+
+        md_file = ocr_dir / f"{source_file.stem}.md"
+        if md_file.exists():
+            return md_file
+
         return None
 
     @staticmethod

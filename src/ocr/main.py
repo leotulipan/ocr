@@ -102,6 +102,7 @@ async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
 
         filename_metadata = None
         markdown_content = None
+        pages_processed = 1  # Default to single page
 
         # Filename generation workflow
         if rename or dry_run:
@@ -120,6 +121,7 @@ async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
                     # Step 3: OCR first page only
                     console.print("[yellow]Processing first page for analysis...[/yellow]")
                     markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
+                    pages_processed = 1
 
                 # Step 4: Generate filename
                 console.print("[yellow]Analyzing content for filename generation...[/yellow]")
@@ -136,8 +138,21 @@ async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
                     filename_metadata = await filename_generator.analyze_content(full_markdown, pages_analyzed=-1)
                     console.print(f"[green]Updated filename:[/green] {filename_metadata.generated_filename}")
                     markdown_content = full_markdown
+                    pages_processed = -1  # Indicates all pages
 
-            # Step 6: Handle dry-run
+            # Step 6: Save markdown even for dry-run
+            if markdown_content:
+                output_file, saved_images = output_manager.save_text_result(
+                    markdown_content,
+                    file_path.stem,
+                    file_path,
+                    include_page_headlines,
+                    filename_metadata=filename_metadata,
+                    pages_processed=pages_processed
+                )
+                console.print(f"✓ Saved OCR result to: [blue]{output_file}[/blue]")
+
+            # Step 7: Handle dry-run
             if dry_run:
                 console.print(f"\n[yellow]DRY RUN - No files will be renamed[/yellow]")
                 new_name = filename_generator.generate_filename_with_extension(
@@ -146,37 +161,39 @@ async def _process_file(file_path: Path, output_dir: Optional[Path] = None,
                 console.print(f"[green]Suggested filename:[/green] {new_name}")
                 return
 
-            # Step 7: Handle confirmation
+            # Step 8: Handle confirmation
             if confirm:
                 if not FileRenamer.confirm_rename(file_path, filename_metadata.generated_filename):
                     console.print("[yellow]Rename cancelled by user[/yellow]")
                     rename = False
 
-        # Standard OCR processing
-        console.print(f"Processing file: [green]{file_path}[/green]")
-        if page_pattern:
-            console.print(f"Page pattern: [yellow]{page_pattern}[/yellow]")
-        if include_page_headlines:
-            console.print("Including page headlines: [yellow]enabled[/yellow]")
-
-        # Process file normally if not using cached markdown
+        # Standard OCR processing (if not in rename/dry-run mode or markdown not cached)
         if not markdown_content:
+            console.print(f"Processing file: [green]{file_path}[/green]")
+            if page_pattern:
+                console.print(f"Page pattern: [yellow]{page_pattern}[/yellow]")
+                # Determine pages processed from pattern (simplified - just check if it's "1")
+                pages_processed = 1 if page_pattern == "1" else -1
+            if include_page_headlines:
+                console.print("Including page headlines: [yellow]enabled[/yellow]")
+
             result, api_images = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
         else:
             result = markdown_content
             api_images = 0  # Already counted from cache
 
-        # Save result with filename metadata
-        output_file, saved_images = output_manager.save_text_result(
-            result,
-            file_path.stem,
-            file_path,
-            include_page_headlines,
-            filename_metadata=filename_metadata
-        )
-
-        console.print(f"✓ Saved result to: [blue]{output_file}[/blue]")
-        console.print(f"📊 API returned {api_images} images, saved {saved_images} images")
+        # Save result with filename metadata (if not already saved)
+        if not markdown_content or not (rename or dry_run):
+            output_file, saved_images = output_manager.save_text_result(
+                result,
+                file_path.stem,
+                file_path,
+                include_page_headlines,
+                filename_metadata=filename_metadata,
+                pages_processed=pages_processed
+            )
+            console.print(f"✓ Saved result to: [blue]{output_file}[/blue]")
+            console.print(f"📊 API returned {api_images} images, saved {saved_images} images")
 
         # Perform rename if requested
         if rename and filename_metadata:

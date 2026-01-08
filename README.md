@@ -107,8 +107,9 @@ ocr process-file --file document.pdf --page-headlines
 # Save to specific directory
 ocr process-file --file document.pdf --output /path/to/output
 
-# By default, single files save next to the original:
-# document.pdf → document_ocr.md
+# By default, single files save in .ocr subdirectory:
+# document.pdf → .ocr/document.pg1.md (single page)
+# document.pdf → .ocr/document.md (multiple pages)
 ```
 
 ## Intelligent Filename Generation
@@ -164,11 +165,26 @@ ocr process-folder --folder ./invoices --rename
 
 ## Output Format
 
-OCR results are saved as Markdown files with YAML frontmatter:
+OCR results are saved in a `.ocr` subdirectory as Markdown files with YAML frontmatter:
+
+### File Structure
+
+```
+your-document.pdf
+.ocr/
+├── your-document.pg1.md    # Single-page document
+├── your-document.md        # Multi-page document
+└── images/                 # Extracted images
+    ├── your-document_1.jpg
+    └── your-document_2.png
+```
+
+### Markdown Format
 
 ```markdown
 ---
 source_file: /path/to/document.pdf
+original_filename: scan001.pdf
 processed_at: 2026-01-08T15:30:45.123456
 content_length: 15432
 include_page_headlines: false
@@ -187,7 +203,7 @@ filename_metadata:
 # Document content here...
 ```
 
-Images are saved in an `images/` subdirectory next to the markdown file.
+**Note:** The `original_filename` field preserves the filename before any renaming, allowing you to track the original file name even after intelligent renaming.
 
 ## Supported File Types
 
@@ -259,7 +275,7 @@ ocr process-folder --folder PATH [OPTIONS]
 # Process a document
 ocr process-file --file contract.pdf
 
-# Output: contract_ocr.md (saved next to contract.pdf)
+# Output: .ocr/contract.pg1.md or .ocr/contract.md
 ```
 
 ### Example 2: Intelligent Renaming
@@ -341,7 +357,7 @@ uv tool uninstall ocr
 uv build --wheel
 
 # Install from wheel
-uv tool install dist/ocr-0.2.1-py3-none-any.whl
+uv tool install dist/ocr-0.2.2-py3-none-any.whl
 ```
 
 ### Running Tests
@@ -364,7 +380,13 @@ pytest
 
 ## Version History
 
-### v0.2.1 (Current)
+### v0.2.2 (Current)
+- **New `.ocr` subdirectory structure**: All OCR markdown files now saved in `.ocr` subdirectory for better organization
+- **Page-based naming**: Single-page documents use `.pg1.md` suffix, multi-page use `.md` suffix
+- **Original filename tracking**: Added `original_filename` field in metadata to preserve pre-rename filenames
+- **Dry-run fix**: OCR markdown files now created even in `--dry-run` mode
+
+### v0.2.1
 - Added automatic `.env` file setup in user home directory
 - Improved configuration file handling with fallback support
 - Enhanced user guidance for API key setup
