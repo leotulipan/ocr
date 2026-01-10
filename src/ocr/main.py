@@ -258,11 +258,13 @@ async def _process_single_file(
                 new_name = filename_generator.generate_filename_with_extension(
                     filename_metadata.generated_filename, file_path
                 )
-                # Simple output for non-verbose mode
+                # Show current -> new filename
                 if not verbose and filename_metadata:
-                    console.print(f"{filename_metadata.generated_filename} (Confidence: {filename_metadata.confidence})")
+                    console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
                 elif verbose:
-                    console.print(f"[green]Suggested filename:[/green] {new_name}")
+                    console.print(f"[cyan]Current:[/cyan] {file_path.name}")
+                    console.print(f"[green]New:[/green] {new_name}")
+                    console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
                 return
 
             # Step 8: Handle confirmation
@@ -398,8 +400,11 @@ async def _process_multiple_files(
                                     current_filename=file_path.name
                                 )
 
-                        # Print simple output
-                        console.print(f"{filename_metadata.generated_filename} (Confidence: {filename_metadata.confidence})")
+                        # Print simple output - show current -> new filename
+                        new_name = filename_generator.generate_filename_with_extension(
+                            filename_metadata.generated_filename, file_path
+                        )
+                        console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
                         results.append((file_path, "success", filename_metadata))
                     else:
                         # Non-rename mode

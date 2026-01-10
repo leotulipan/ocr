@@ -145,6 +145,42 @@ ocr ocr_test/IMG_0466.JPG ocr_test/IMG_0468.JPG --concat
 
 ---
 
+## Output Format Tests
+
+### Dry-Run Output Shows Current and New Filename
+
+**Test:**
+```bash
+ocr ocr_test/Heunisch.pdf --rename --dry-run
+```
+
+**Expected Output (Simple Mode):**
+```
+Heunisch.pdf -> 2022-10-24 - HEUNISCH & FREUN - Rechnung.pdf (Confidence: 0.9)
+```
+
+**Expected Output (Verbose Mode):**
+```bash
+ocr ocr_test/Heunisch.pdf --rename --dry-run --verbose
+```
+```
+Filename generation mode enabled
+Using cached filename: 2022-10-24 - HEUNISCH & FREUN - Rechnung
+
+DRY RUN - No files will be renamed
+Current: Heunisch.pdf
+New: 2022-10-24 - HEUNISCH & FREUN - Rechnung.pdf
+Confidence: 0.9
+```
+
+**Key Test:**
+- Shows both current filename AND suggested new filename
+- Simple mode: `current.pdf -> new.pdf (Confidence: X.X)`
+- Verbose mode: Separate lines for Current, New, and Confidence
+- Batch mode shows all files with same format
+
+---
+
 ## Testing Commands
 
 ```bash
