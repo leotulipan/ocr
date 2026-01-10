@@ -360,6 +360,70 @@ Befunddatum: 12.09.2024
 
 ---
 
+### Skip Already Correctly Named Files Test
+
+**Scenario:** Files that are already correctly named should be skipped without unnecessary AI calls
+
+**Setup:**
+```bash
+# First, ensure file is renamed correctly (do this once)
+cd C:\Users\leona\OneDrive\_2_Areas\Scripts\OCR
+uv run ocr ocr_test/Kolarik.pdf --rename --force
+# This renames: Kolarik.pdf → 2022-10-21 - Kolarik - Rechnung.pdf
+```
+
+**Test (after file is already renamed):**
+```bash
+# Test with the correctly named file
+uv run ocr ocr_test/Kolarik.pdf --rename --dry-run
+```
+
+**Expected Output:**
+```
+[OK] Kolarik.pdf (already correct)
+```
+
+**Batch Processing Test:**
+```bash
+# Test with multiple files, one already correct
+uv run ocr ocr_test/Heunisch.pdf ocr_test/Kolarik.pdf --rename --dry-run
+```
+
+**Expected Output:**
+```
+Processing 2 files...
+Heunisch.pdf -> 2022-10-24 - Heunisch & Freun - Rechnung.pdf (Confidence: 0.9)
+[OK] Kolarik.pdf (already correct)
+```
+
+**Verbose Mode Test:**
+```bash
+uv run ocr ocr_test/Kolarik.pdf --rename --dry-run --verbose
+```
+
+**Expected Output:**
+```
+Filename generation mode enabled
+Using cached filename: 2022-10-21 - Kolarik - Rechnung
+[OK] Already correctly named: Kolarik.pdf
+```
+
+**Key Test:**
+- Files with current name matching cached generated filename are skipped
+- No AI call made for already-correct files (saves API calls and time)
+- Clear indication shown in both simple and verbose modes
+- Works in both single-file and batch processing modes
+- Helps resume operations in large directories without re-processing correctly named files
+- Use `--force` flag to override and regenerate filename if needed
+
+**Performance Benefit:**
+- Skips OCR processing (file already has cached .ocr file)
+- Skips filename generation (cached metadata matches current name)
+- Instantly shows "[OK] ... (already correct)" message
+- No Mistral API calls for these files
+
+---
+
 ## Testing Commands
 
 ```bash

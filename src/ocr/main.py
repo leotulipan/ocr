@@ -158,6 +158,12 @@ async def _main(
         raise typer.Exit(1)
 
 
+def _is_filename_already_correct(file_path: Path, generated_filename: str) -> bool:
+    """Check if current filename already matches the generated filename."""
+    current_name = file_path.stem  # Filename without extension
+    return current_name == generated_filename
+
+
 async def _process_single_file(
     file_path: Path,
     output_dir: Optional[Path],
@@ -201,6 +207,14 @@ async def _process_single_file(
                 if verbose:
                     console.print(f"[green]Using cached filename:[/green] {cached_filename.generated_filename}")
                 filename_metadata = cached_filename
+
+                # Check if file is already correctly named
+                if _is_filename_already_correct(file_path, filename_metadata.generated_filename):
+                    if verbose:
+                        console.print(f"[green][OK] Already correctly named:[/green] {file_path.name}")
+                    else:
+                        console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
+                    return
             else:
                 # Step 2: Try to get cached markdown to avoid re-OCR
                 markdown_content = CacheManager.get_cached_markdown(file_path)
@@ -398,6 +412,11 @@ async def _process_multiple_files(
                             cached_filename = CacheManager.get_cached_filename(file_path, force=force)
                             if cached_filename and not force:
                                 filename_metadata = cached_filename
+
+                                # Check if file is already correctly named
+                                if _is_filename_already_correct(file_path, filename_metadata.generated_filename):
+                                    console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
+                                    return (file_path, "skipped", filename_metadata)
                             else:
                                 markdown_content = CacheManager.get_cached_markdown(file_path)
                                 if not markdown_content:
@@ -465,6 +484,12 @@ async def _process_multiple_files(
                         cached_filename = CacheManager.get_cached_filename(file_path, force=force)
                         if cached_filename and not force:
                             filename_metadata = cached_filename
+
+                            # Check if file is already correctly named
+                            if _is_filename_already_correct(file_path, filename_metadata.generated_filename):
+                                console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
+                                results.append((file_path, "skipped", filename_metadata))
+                                continue
                         else:
                             markdown_content = CacheManager.get_cached_markdown(file_path)
                             if not markdown_content:
@@ -531,15 +556,24 @@ async def _process_multiple_files(
             table.add_column("Status", style="green")
 
             for file_path, status, _ in results:
-                status_text = "[OK] Success" if status == "success" else f"[ERROR] {status}"
+                if status == "success":
+                    status_text = "[OK] Success"
+                elif status == "skipped":
+                    status_text = "[OK] Already correct"
+                else:
+                    status_text = f"[ERROR] {status}"
                 table.add_row(file_path.name, status_text)
 
             console.print(table)
 
         # Summary line
         success_count = len([r for r in results if r[1] == "success"])
-        if verbose or success_count < len(results):
-            console.print(f"\n[green]Processed {success_count} / {len(results)} files successfully[/green]")
+        skipped_count = len([r for r in results if r[1] == "skipped"])
+        if verbose or success_count + skipped_count < len(results):
+            if skipped_count > 0:
+                console.print(f"\n[green]Processed {success_count} / {len(results)} files successfully, {skipped_count} already correct[/green]")
+            else:
+                console.print(f"\n[green]Processed {success_count} / {len(results)} files successfully[/green]")
 
     except Exception as e:
         console.print(f"[ERROR] Error: [red]{e}[/red]")
