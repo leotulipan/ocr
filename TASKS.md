@@ -39,7 +39,7 @@
 [x] ocr --rename (without dry-run) does not do anything currently - VERIFIED WORKING
 [x] --confirm now asks y/n for each file individually in batch mode
 [x] Added --concurrent flag (default: 3, max: 10) for async processing to speed up folder processing
-[ ] Add to filename prompt: Dates older than 10 years ago (e.g. 2015) are most likely DOB. Especially for medical records look for a "sample taking date" or the like and only use the date of birth if no other (current) date can be found
+[x] Enhanced filename prompt with date priority rules: Dates >10 years are likely DOB, prioritize sample/examination dates for medical records
 [ ] when running in a target folder an empty "ocr_output" is generated. remove that feature entirely
 
 -------------------------------------------------------------------------------------------------------------------------------

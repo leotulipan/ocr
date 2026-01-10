@@ -29,6 +29,12 @@ CRITICAL RULES:
 EXTRACTION GUIDELINES:
 - **Company**: Look for markdown heading starting with "# " (H1) at the top of document. This is usually the company name. Shorten long names to key identifier (e.g., "Kolariks Freizeitbetriebe GmbH" → "Kolarik").
 - **Date**: FIRST check current filename for ISO dates (YYYY-MM-DD), then search the document for dates in any format (DD.MM.YYYY, YYYY-MM-DD, etc.). Convert to ISO YYYY-MM-DD format. Check near the bottom for transaction dates.
+  - **IMPORTANT Date Priority Rules:**
+    - Dates older than 10 years from today are likely DOB (Date of Birth) - use with caution
+    - For medical records: prioritize "sample date", "examination date", "test date", "report date" over DOB
+    - Only use very old dates (>10 years) if no other date is available
+    - Prefer recent dates (within last 10 years) as they're more likely to be document dates
+    - Look for date labels: "Befunddatum", "Probenentnahme", "Untersuchungsdatum", "Datum der Untersuchung"
 - **Summary**: Look for H2 headings (##) like "## RECHNUNG" or keywords indicating document type. Also check current filename for keywords like "Meldezettel", "Rechnung", "Invoice". Use business-appropriate terms.
 
 CURRENT FILENAME HINTS:
@@ -65,6 +71,10 @@ Output: {"date": "2022-10-21", "company": "Kolarik", "summary": "Rechnung", "con
 
 Input: "# WKO\nSome text...\n## Mahnung"
 Output: {"date": null, "company": "WKO", "summary": "Mahnung", "confidence": 0.6}
+
+Input (Medical Record): "# Labor XY\nPatient DOB: 15.03.1985\nBefunddatum: 12.09.2024\n## Laborbefund"
+Output: {"date": "2024-09-12", "company": "Labor XY", "summary": "Laborbefund", "confidence": 0.9}
+Note: Used "Befunddatum" (2024) instead of DOB (1985) as it's the actual report date
 
 Return ONLY valid JSON (no markdown code blocks):
 {

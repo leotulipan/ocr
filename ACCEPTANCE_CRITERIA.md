@@ -317,6 +317,49 @@ Using concurrent processing (2 workers)
 
 ---
 
+### Date Extraction Priority Test (Medical Records)
+
+**Scenario:** Document contains multiple dates (DOB and actual document date)
+
+**Expected Behavior:**
+1. Dates older than 10 years from today are likely DOB (Date of Birth)
+2. For medical records, prioritize examination/sample/report dates over DOB
+3. Look for German medical date labels: "Befunddatum", "Probenentnahme", "Untersuchungsdatum"
+4. Only use very old dates (>10 years) if no other date is available
+5. Prefer recent dates (within last 10 years) as document dates
+
+**Example Document Content:**
+```markdown
+# Labor XY
+Patient DOB: 15.03.1985
+Befunddatum: 12.09.2024
+
+## Laborbefund
+```
+
+**Expected Extraction:**
+```json
+{
+  "date": "2024-09-12",
+  "company": "Labor XY",
+  "summary": "Laborbefund",
+  "confidence": 0.9
+}
+```
+
+**Expected Filename:**
+```
+2024-09-12 - Labor XY - Laborbefund.pdf
+```
+
+**Key Test:**
+- Uses "Befunddatum" (2024-09-12) instead of DOB (1985-03-15)
+- Recent date (2024) prioritized over 39-year-old date (1985)
+- Medical terminology recognized: "Laborbefund", "Befunddatum"
+- DOB would only be used if no other date is available
+
+---
+
 ## Testing Commands
 
 ```bash
