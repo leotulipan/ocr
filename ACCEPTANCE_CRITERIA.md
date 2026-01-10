@@ -181,6 +181,51 @@ Confidence: 0.9
 
 ---
 
+### Rename Functionality Test
+
+**Test:**
+```bash
+# Rename a file (creates new OCR if needed)
+ocr ocr_test/Kolarik.pdf --rename --force
+```
+
+**Expected Behavior:**
+1. Generates intelligent filename: `2022-10-21 - Kolarik - Rechnung`
+2. Renames source file: `Kolarik.pdf` → `2022-10-21 - Kolarik - Rechnung.pdf`
+3. Renames OCR file: `.ocr/Kolarik.pg1.md` → `.ocr/2022-10-21 - Kolarik - Rechnung.pg1.md`
+4. Both files renamed atomically (if one fails, neither is renamed)
+
+**Expected Output:**
+```
+Renaming files...
+[OK] Renamed to: 2022-10-21 - Kolarik - Rechnung.pdf
+[OK] OCR file: 2022-10-21 - Kolarik - Rechnung.pg1.md
+```
+
+**Verbose Output:**
+```bash
+ocr ocr_test/Kolarik.pdf --rename --force --verbose
+```
+```
+Filename generation mode enabled
+Analyzing content for filename generation...
+Generated filename: 2022-10-21 - Kolarik - Rechnung
+Confidence: 0.9
+[OK] Saved OCR result to: ocr_test\.ocr\Kolarik.pg1.md
+
+Renaming files...
+[OK] Renamed to: 2022-10-21 - Kolarik - Rechnung.pdf
+[OK] OCR file: 2022-10-21 - Kolarik - Rechnung.pg1.md
+```
+
+**Key Test:**
+- Both source file and OCR markdown file are renamed together
+- Uses cached filename if available (use `--force` to regenerate)
+- Collision detection with counter suffix if file exists
+- Rollback on failure (atomic operation)
+
+---
+
 ## Testing Commands
 
 ```bash
