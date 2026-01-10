@@ -86,7 +86,41 @@ ocr ocr_test/Heunisch.pdf ocr_test/Kolarik.pdf --concat
 
 ---
 
-### 5. Concatenate Image Files (IMG_0466.JPG + IMG_0468.JPG)
+### 5. Filename-Based Metadata Extraction
+Test file with informative filename that should be used for extraction
+
+**Test File:** `ocr_test/2020-10-01 Meldezettel Sompek Strasse.pdf`
+
+**Current Behavior (v0.6.0):**
+- Low confidence (~0.3) extraction from document content alone
+- Misses valuable information already in filename
+
+**Expected Behavior (v0.7.0+):**
+- Filename treated as HIGH PRIORITY source for metadata
+- ISO date extracted from filename: `2020-10-01`
+- Location/Company extracted: `Sompek Strasse`
+- Document type extracted: `Meldezettel`
+- High confidence (0.8-0.9) due to filename providing clear structure
+
+**Expected Filename (fuzzy):**
+```
+2020-10-01 - Sompek Strasse - Meldezettel.pdf
+```
+
+**Command:**
+```bash
+ocr ocr_test/2020-10-01\ Meldezettel\ Sompek\ Strasse.pdf --rename --dry-run
+```
+
+**Key Test:**
+- Current filename is passed to Mistral AI for analysis
+- Filename metadata ranks higher than document content for structured info
+- Confidence threshold default is 0.7 (can be changed with `--confidence`)
+- Output shows: `2020-10-01 - Sompek Strasse - Meldezettel (Confidence: 0.9)`
+
+---
+
+### 6. Concatenate Image Files (IMG_0466.JPG + IMG_0468.JPG)
 Concatenate multiple image files into one output treating each as a page
 
 **Command:**
@@ -114,11 +148,23 @@ ocr ocr_test/IMG_0466.JPG ocr_test/IMG_0468.JPG --concat
 ## Testing Commands
 
 ```bash
-# Dry Run file rename
+# Dry Run file rename (simple output)
 ocr --rename --dry-run {filename}
+
+# Dry Run file rename with verbose output
+ocr --rename --dry-run --verbose {filename}
 
 # Dry Run file rename, force re-ocr
 ocr --rename --dry-run --force {filename}
+
+# Set custom confidence threshold (default: 0.7)
+ocr --rename --dry-run --confidence 0.8 {filename}
+
+# Batch processing with simple output
+ocr *.pdf --rename --dry-run
+
+# Batch processing with verbose output
+ocr *.pdf --rename --dry-run --verbose
 
 # OCR with image descriptions (default: enabled)
 ocr {filename}
@@ -131,4 +177,7 @@ ocr file1.pdf file2.pdf file3.pdf --concat
 
 # Concatenate with custom output location
 ocr page1.jpg page2.jpg page3.jpg --concat --output combined.md
+
+# Concatenate with intelligent filename generation
+ocr file1.pdf file2.pdf --concat --rename
 ```

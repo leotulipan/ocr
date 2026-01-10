@@ -17,18 +17,25 @@ class FilenameGenerator:
     SYSTEM_PROMPT = """You are a filename generation expert. Analyze document content and generate structured, descriptive filenames.
 
 CRITICAL RULES:
-1. Extract ONLY information that is explicitly present in the document
-2. DO NOT hallucinate, infer, or guess information not in the text
+1. Extract ONLY information that is explicitly present in the document or current filename
+2. DO NOT hallucinate, infer, or guess information not in the text or filename
 3. IGNORE any embedded images or image references (e.g., "![img-0.jpeg]")
 4. Look for text content in markdown headings (# and ##), body text, and tables
 5. Extract company name from the first H1 heading (starts with single #) or prominent business name near the top
-6. Extract date in ISO format YYYY-MM-DD from any date found in the document
+6. Extract date in ISO format YYYY-MM-DD from any date found in the document OR current filename
 7. For summary, identify the document type from H2 headings (##) or prominent keywords
+8. If provided, use the current filename as a HIGH PRIORITY source for dates, names, and keywords
 
 EXTRACTION GUIDELINES:
 - **Company**: Look for markdown heading starting with "# " (H1) at the top of document. This is usually the company name. Shorten long names to key identifier (e.g., "Kolariks Freizeitbetriebe GmbH" → "Kolarik").
-- **Date**: Search the entire document for dates in any format (DD.MM.YYYY, YYYY-MM-DD, etc.). Convert to ISO YYYY-MM-DD format. Check near the bottom for transaction dates.
-- **Summary**: Look for H2 headings (##) like "## RECHNUNG" or keywords indicating document type. Use business-appropriate terms: "Rechnung", "Restaurant", "Invoice", "Letter", "Befund", "Mahnung", "Gastrorechnung".
+- **Date**: FIRST check current filename for ISO dates (YYYY-MM-DD), then search the document for dates in any format (DD.MM.YYYY, YYYY-MM-DD, etc.). Convert to ISO YYYY-MM-DD format. Check near the bottom for transaction dates.
+- **Summary**: Look for H2 headings (##) like "## RECHNUNG" or keywords indicating document type. Also check current filename for keywords like "Meldezettel", "Rechnung", "Invoice". Use business-appropriate terms.
+
+CURRENT FILENAME HINTS:
+- If filename contains "YYYY-MM-DD" format, prioritize this date over dates in document
+- If filename contains recognizable keywords (Meldezettel, Rechnung, etc.), use them
+- If filename has structured info like "2020-10-01 Meldezettel Sompek Strasse", extract all parts
+- Reformat filename info to match pattern: "{ISO-date} - {Company/Location} - {Summary}"
 
 MARKDOWN STRUCTURE HINTS:
 - "# CompanyName" = H1 heading with company
@@ -37,7 +44,7 @@ MARKDOWN STRUCTURE HINTS:
 - Ignore image markers like "![]()" completely
 
 CONFIDENCE SCORING (0.0 to 1.0, one decimal place):
-- 0.9-1.0: All three fields (date, company, summary) clearly visible and unambiguous
+- 0.9-1.0: All three fields (date, company, summary) clearly visible and unambiguous in document OR filename
 - 0.7-0.8: Two fields clear, one partially clear or requires minor interpretation
 - 0.5-0.6: Two fields found, one missing or unclear
 - 0.3-0.4: Only one field clearly identified
@@ -49,6 +56,9 @@ Examples of correct extraction:
 
 Input: "# HEUNISCH + FREBEN\n...\nDatum: 24.10.2022\n## Gastrorechnung"
 Output: {"date": "2022-10-24", "company": "HEUNISCH + FREBEN", "summary": "Gastrorechnung", "confidence": 0.9}
+
+Input (with current filename "2020-10-01 Meldezettel Sompek Strasse.pdf"): "Meldezettel document content..."
+Output: {"date": "2020-10-01", "company": "Sompek Strasse", "summary": "Meldezettel", "confidence": 0.9}
 
 Input: "# Kolariks Freizeitbetriebe GmbH\n1020 Wien...\n## RECHNUNG\n...\n21.10.2022 21:29:18"
 Output: {"date": "2022-10-21", "company": "Kolarik", "summary": "Rechnung", "confidence": 0.9}
@@ -81,15 +91,32 @@ Return ONLY valid JSON (no markdown code blocks):
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in response: {text}") from e
 
-    async def analyze_content(self, markdown_content: str, pages_analyzed: int = 1) -> FilenameMetadata:
-        """Analyze markdown content and extract filename components."""
+    async def analyze_content(
+        self,
+        markdown_content: str,
+        pages_analyzed: int = 1,
+        current_filename: Optional[str] = None
+    ) -> FilenameMetadata:
+        """Analyze markdown content and extract filename components.
+
+        Args:
+            markdown_content: The OCR'd markdown content to analyze
+            pages_analyzed: Number of pages analyzed (1 for first page, -1 for all)
+            current_filename: Optional current filename to use as additional context
+        """
         try:
+            # Build user message with optional current filename
+            user_message = "Analyze this document content and generate filename:"
+            if current_filename:
+                user_message += f"\n\nCurrent filename: {current_filename}"
+            user_message += f"\n\nDocument content:\n{markdown_content[:4000]}"
+
             # Call Mistral chat completion API
             response = await self.client.chat.complete_async(
                 model=self.settings.filename_generation_model,
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Analyze this document content and generate filename:\n\n{markdown_content[:4000]}"}
+                    {"role": "user", "content": user_message}
                 ],
                 temperature=self.settings.filename_generation_temperature,
                 max_tokens=self.settings.filename_generation_max_tokens

@@ -75,6 +75,8 @@ def main(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show suggested filenames without renaming"),
     confirm: bool = typer.Option(False, "--confirm", help="Ask for confirmation before operations"),
     force: bool = typer.Option(False, "--force", help="Force regenerate filenames even if cached"),
+    confidence: float = typer.Option(0.7, "--confidence", help="Minimum confidence threshold for accepting generated filenames (0.0-1.0, default: 0.7)"),
+    verbose: bool = typer.Option(False, "--verbose", help="Show detailed processing information"),
     version: bool = typer.Option(None, "--version", "-v", callback=version_callback, is_eager=True, help="Show version and exit"),
 ):
     """OCR CLI - Process documents with Mistral AI.
@@ -87,7 +89,7 @@ def main(
         ocr magazine.pdf --image-descriptions
         ocr page1.jpg page2.jpg page3.jpg --concat --output combined.md
     """
-    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, concat, rename, dry_run, confirm, force))
+    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, concat, rename, dry_run, confirm, force, confidence, verbose))
 
 
 async def _main(
@@ -101,6 +103,8 @@ async def _main(
     dry_run: bool,
     confirm: bool,
     force: bool,
+    confidence_threshold: float,
+    verbose: bool,
 ):
     """Main processing logic."""
     try:
@@ -120,7 +124,7 @@ async def _main(
                 console.print("[yellow]Warning:[/yellow] --dry-run is ignored in --concat mode")
             await _process_concat_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, confirm, force
+                include_image_descriptions, rename, confirm, force, confidence_threshold, verbose
             )
             return
 
@@ -137,12 +141,12 @@ async def _main(
         if is_single_file:
             await _process_single_file(
                 files[0], output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, dry_run, confirm, force
+                include_image_descriptions, rename, dry_run, confirm, force, confidence_threshold, verbose
             )
         else:
             await _process_multiple_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, dry_run, confirm, force
+                include_image_descriptions, rename, dry_run, confirm, force, confidence_threshold, verbose
             )
 
     except Exception as e:
@@ -160,6 +164,8 @@ async def _process_single_file(
     dry_run: bool,
     confirm: bool,
     force: bool,
+    confidence_threshold: float,
+    verbose: bool,
 ):
     """Process a single file with optional filename generation."""
     try:
@@ -179,12 +185,17 @@ async def _process_single_file(
 
         # Filename generation workflow
         if rename or dry_run:
-            console.print(f"[yellow]Filename generation mode enabled[/yellow]")
+            if verbose:
+                console.print(f"[yellow]Filename generation mode enabled[/yellow]")
+
+            # Initialize filename generator
+            filename_generator = FilenameGenerator(settings)
 
             # Step 1: Check cache
             cached_filename = CacheManager.get_cached_filename(file_path, force=force)
             if cached_filename and not force:
-                console.print(f"[green]Using cached filename:[/green] {cached_filename.generated_filename}")
+                if verbose:
+                    console.print(f"[green]Using cached filename:[/green] {cached_filename.generated_filename}")
                 filename_metadata = cached_filename
             else:
                 # Step 2: Try to get cached markdown to avoid re-OCR
@@ -192,26 +203,38 @@ async def _process_single_file(
 
                 if not markdown_content:
                     # Step 3: OCR first page only
-                    console.print("[yellow]Processing first page for analysis...[/yellow]")
+                    if verbose:
+                        console.print("[yellow]Processing first page for analysis...[/yellow]")
                     markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
                     pages_processed = 1
 
                 # Step 4: Generate filename
-                console.print("[yellow]Analyzing content for filename generation...[/yellow]")
-                filename_generator = FilenameGenerator(settings)
-                filename_metadata = await filename_generator.analyze_content(markdown_content, pages_analyzed=1)
+                if verbose:
+                    console.print("[yellow]Analyzing content for filename generation...[/yellow]")
+                filename_metadata = await filename_generator.analyze_content(
+                    markdown_content,
+                    pages_analyzed=1,
+                    current_filename=file_path.name
+                )
 
-                console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
-                console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
+                if verbose:
+                    console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
+                    console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
 
                 # Step 5: Check if first page analysis was sufficient
-                # Confidence < 0.5 is considered low and triggers full document processing
-                if filename_metadata.confidence is not None and filename_metadata.confidence < 0.5:
-                    console.print(f"[yellow]Low confidence ({filename_metadata.confidence}), processing all pages...[/yellow]")
+                # Use confidence_threshold for determining if full document processing is needed
+                if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                    if verbose:
+                        console.print(f"[yellow]Low confidence ({filename_metadata.confidence}), processing all pages...[/yellow]")
                     full_markdown, _ = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
-                    filename_metadata = await filename_generator.analyze_content(full_markdown, pages_analyzed=-1)
-                    console.print(f"[green]Updated filename:[/green] {filename_metadata.generated_filename}")
-                    console.print(f"[cyan]Updated confidence:[/cyan] {filename_metadata.confidence}")
+                    filename_metadata = await filename_generator.analyze_content(
+                        full_markdown,
+                        pages_analyzed=-1,
+                        current_filename=file_path.name
+                    )
+                    if verbose:
+                        console.print(f"[green]Updated filename:[/green] {filename_metadata.generated_filename}")
+                        console.print(f"[cyan]Updated confidence:[/cyan] {filename_metadata.confidence}")
                     markdown_content = full_markdown
                     pages_processed = -1  # Indicates all pages
 
@@ -225,15 +248,21 @@ async def _process_single_file(
                     filename_metadata=filename_metadata,
                     pages_processed=pages_processed
                 )
-                console.print(f"[OK] Saved OCR result to: [blue]{output_file}[/blue]")
+                if verbose:
+                    console.print(f"[OK] Saved OCR result to: [blue]{output_file}[/blue]")
 
             # Step 7: Handle dry-run
             if dry_run:
-                console.print(f"\n[yellow]DRY RUN - No files will be renamed[/yellow]")
+                if verbose:
+                    console.print(f"\n[yellow]DRY RUN - No files will be renamed[/yellow]")
                 new_name = filename_generator.generate_filename_with_extension(
                     filename_metadata.generated_filename, file_path
                 )
-                console.print(f"[green]Suggested filename:[/green] {new_name}")
+                # Simple output for non-verbose mode
+                if not verbose and filename_metadata:
+                    console.print(f"{filename_metadata.generated_filename} (Confidence: {filename_metadata.confidence})")
+                elif verbose:
+                    console.print(f"[green]Suggested filename:[/green] {new_name}")
                 return
 
             # Step 8: Handle confirmation
@@ -296,6 +325,8 @@ async def _process_multiple_files(
     dry_run: bool,
     confirm: bool,
     force: bool,
+    confidence_threshold: float,
+    verbose: bool,
 ):
     """Process multiple files with optional batch rename."""
     try:
@@ -308,38 +339,96 @@ async def _process_multiple_files(
         output_manager = OutputManager(output_dir, save_at_input_location)
 
         console.print(f"Processing {len(files)} files...")
-        if page_pattern:
-            console.print(f"Page pattern: [yellow]{page_pattern}[/yellow]")
-        if include_page_headlines:
-            console.print("Including page headlines: [yellow]enabled[/yellow]")
-        if include_image_descriptions:
-            console.print("Image descriptions: [yellow]enabled[/yellow]")
+        if verbose:
+            if page_pattern:
+                console.print(f"Page pattern: [yellow]{page_pattern}[/yellow]")
+            if include_page_headlines:
+                console.print("Including page headlines: [yellow]enabled[/yellow]")
+            if include_image_descriptions:
+                console.print("Image descriptions: [yellow]enabled[/yellow]")
+            console.print("")  # Add blank line for better readability
 
         # Process each file
         results = []
-        for file_path in track(files, description="Processing files..."):
-            try:
-                # Use single-file logic for each file to support rename/dry-run
-                await _process_single_file(
-                    file_path, output_dir, page_pattern, include_page_headlines,
-                    include_image_descriptions, rename, dry_run, confirm, force
-                )
-                results.append((file_path, "success"))
-            except Exception as e:
-                console.print(f"[ERROR] Error processing {file_path.name}: [red]{e}[/red]")
-                results.append((file_path, f"error: {e}"))
+        if verbose:
+            # Use progress bar in verbose mode
+            for file_path in track(files, description="Processing files..."):
+                try:
+                    # Use single-file logic for each file to support rename/dry-run
+                    await _process_single_file(
+                        file_path, output_dir, page_pattern, include_page_headlines,
+                        include_image_descriptions, rename, dry_run, confirm, force,
+                        confidence_threshold, verbose
+                    )
+                    results.append((file_path, "success", None))
+                except Exception as e:
+                    console.print(f"[ERROR] Error processing {file_path.name}: [red]{e}[/red]")
+                    results.append((file_path, "error", str(e)))
+        else:
+            # Simple output without progress bar for non-verbose mode
+            for file_path in files:
+                try:
+                    # Capture filename metadata for simple output
+                    filename_generator = FilenameGenerator(settings) if (rename or dry_run) else None
 
-        # Create summary table
-        table = Table(title="Processing Results")
-        table.add_column("File", style="cyan")
-        table.add_column("Status", style="green")
+                    if rename or dry_run:
+                        # Quick filename generation
+                        cached_filename = CacheManager.get_cached_filename(file_path, force=force)
+                        if cached_filename and not force:
+                            filename_metadata = cached_filename
+                        else:
+                            markdown_content = CacheManager.get_cached_markdown(file_path)
+                            if not markdown_content:
+                                ocr_service = MistralOCRAdapter(settings)
+                                markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
 
-        for file_path, status in results:
-            status_text = "[OK] Success" if status == "success" else f"[ERROR] {status}"
-            table.add_row(file_path.name, status_text)
+                            filename_metadata = await filename_generator.analyze_content(
+                                markdown_content,
+                                pages_analyzed=1,
+                                current_filename=file_path.name
+                            )
 
-        console.print(table)
-        console.print(f"[green]Processed {len([r for r in results if r[1] == 'success'])} / {len(results)} files successfully[/green]")
+                            # Check confidence and process all pages if needed
+                            if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                                ocr_service = MistralOCRAdapter(settings)
+                                full_markdown, _ = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
+                                filename_metadata = await filename_generator.analyze_content(
+                                    full_markdown,
+                                    pages_analyzed=-1,
+                                    current_filename=file_path.name
+                                )
+
+                        # Print simple output
+                        console.print(f"{filename_metadata.generated_filename} (Confidence: {filename_metadata.confidence})")
+                        results.append((file_path, "success", filename_metadata))
+                    else:
+                        # Non-rename mode
+                        await _process_single_file(
+                            file_path, output_dir, page_pattern, include_page_headlines,
+                            include_image_descriptions, rename, dry_run, confirm, force,
+                            confidence_threshold, verbose
+                        )
+                        results.append((file_path, "success", None))
+                except Exception as e:
+                    console.print(f"[ERROR] Error processing {file_path.name}: [red]{e}[/red]")
+                    results.append((file_path, "error", str(e)))
+
+        # Create summary table only in verbose mode
+        if verbose:
+            table = Table(title="Processing Results")
+            table.add_column("File", style="cyan")
+            table.add_column("Status", style="green")
+
+            for file_path, status, _ in results:
+                status_text = "[OK] Success" if status == "success" else f"[ERROR] {status}"
+                table.add_row(file_path.name, status_text)
+
+            console.print(table)
+
+        # Summary line
+        success_count = len([r for r in results if r[1] == "success"])
+        if verbose or success_count < len(results):
+            console.print(f"\n[green]Processed {success_count} / {len(results)} files successfully[/green]")
 
     except Exception as e:
         console.print(f"[ERROR] Error: [red]{e}[/red]")
@@ -355,6 +444,8 @@ async def _process_concat_files(
     rename: bool,
     confirm: bool,
     force: bool,
+    confidence_threshold: float,
+    verbose: bool,
 ):
     """Process multiple files and concatenate into one output document."""
     try:
@@ -453,14 +544,20 @@ async def _process_concat_files(
         # Handle rename mode
         filename_metadata = None
         if rename:
-            console.print(f"\n[yellow]Generating intelligent filename for concatenated document...[/yellow]")
+            if verbose:
+                console.print(f"\n[yellow]Generating intelligent filename for concatenated document...[/yellow]")
             filename_generator = FilenameGenerator(settings)
+            # Use first file's name as current_filename for context
             filename_metadata = await filename_generator.analyze_content(
                 combined_markdown,
-                pages_analyzed=len(files)
+                pages_analyzed=len(files),
+                current_filename=files[0].name
             )
-            console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
-            console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
+            if verbose:
+                console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
+                console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
+            else:
+                console.print(f"{filename_metadata.generated_filename} (Confidence: {filename_metadata.confidence})")
 
             # Update output filename
             output_file = output_file.parent / f"{filename_metadata.generated_filename}.md"
