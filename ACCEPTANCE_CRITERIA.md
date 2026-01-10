@@ -63,6 +63,29 @@ ocr ocr_test/Magazine-Scan.pdf --pages "1" --image-descriptions
 
 ---
 
+### 4. Concatenate Multiple Files (Heunisch.pdf + Kolarik.pdf)
+Concatenate multiple document files into one output treating each as a page
+
+**Command:**
+```bash
+ocr ocr_test/Heunisch.pdf ocr_test/Kolarik.pdf --concat
+```
+
+**Expected Output:**
+- One combined markdown file: `Heunisch_combined.md` in `.ocr/` directory
+- Page headers added: "### Page 1", "### Page 2"
+- All images from both files extracted with unique prefixes (page1_1.jpg, page2_1.jpg)
+- Image descriptions included for all images
+- Metadata shows both source files and original filenames
+
+**Key Test:**
+- Files concatenated in order specified
+- Each page retains its complete content (text, tables, images)
+- Images saved sequentially without naming conflicts
+- Output saved in `.ocr/` subdirectory of first file's location
+
+---
+
 ## Testing Commands
 
 ```bash
@@ -72,6 +95,15 @@ ocr --rename --dry-run {filename}
 # Dry Run file rename, force re-ocr
 ocr --rename --dry-run --force {filename}
 
-# OCR with image descriptions
-ocr {filename} --image-descriptions
+# OCR with image descriptions (default: enabled)
+ocr {filename}
+
+# Disable image descriptions
+ocr {filename} --no-image-descriptions
+
+# Concatenate multiple files into one document
+ocr file1.pdf file2.pdf file3.pdf --concat
+
+# Concatenate with custom output location
+ocr page1.jpg page2.jpg page3.jpg --concat --output combined.md
 ```

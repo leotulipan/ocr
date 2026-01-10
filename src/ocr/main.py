@@ -8,9 +8,13 @@ from rich.console import Console
 from rich.progress import track
 from rich.table import Table
 from rich.prompt import Confirm
+import re
+import yaml
+from datetime import datetime
 
 from . import __version__
 from .models.settings import Settings
+from .models.metadata import OCRMetadata
 from .adapters.mistral_adapter import MistralOCRAdapter
 from .utils.output_manager import OutputManager
 from .services.filename_generator import FilenameGenerator
@@ -65,7 +69,8 @@ def main(
     output: Optional[Path] = typer.Option(None, "-o", "--output", help="Output directory (default: save next to source for single file, ocr_output for multiple)"),
     pages: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')"),
     page_headlines: bool = typer.Option(False, "--page-headlines", help="Include page numbers as markdown headlines"),
-    image_descriptions: bool = typer.Option(False, "--image-descriptions", help="Include AI-generated descriptions for embedded images"),
+    image_descriptions: bool = typer.Option(True, "--image-descriptions/--no-image-descriptions", help="Include AI-generated descriptions for embedded images (default: enabled)"),
+    concat: bool = typer.Option(False, "--concat", help="Concatenate multiple files into one output document (treats each file as a page)"),
     rename: bool = typer.Option(False, "--rename", help="Enable intelligent filename generation and renaming"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show suggested filenames without renaming"),
     confirm: bool = typer.Option(False, "--confirm", help="Ask for confirmation before operations"),
@@ -80,8 +85,9 @@ def main(
         ocr ./invoices/
         ocr *.pdf --rename
         ocr magazine.pdf --image-descriptions
+        ocr page1.jpg page2.jpg page3.jpg --concat --output combined.md
     """
-    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, rename, dry_run, confirm, force))
+    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, concat, rename, dry_run, confirm, force))
 
 
 async def _main(
@@ -90,6 +96,7 @@ async def _main(
     page_pattern: Optional[str],
     include_page_headlines: bool,
     include_image_descriptions: bool,
+    concat: bool,
     rename: bool,
     dry_run: bool,
     confirm: bool,
@@ -103,6 +110,19 @@ async def _main(
         if not files:
             console.print("[red]Error:[/red] No valid files to process")
             raise typer.Exit(1)
+
+        # Check for concat mode
+        if concat:
+            if len(files) < 2:
+                console.print("[red]Error:[/red] --concat requires at least 2 files")
+                raise typer.Exit(1)
+            if rename or dry_run:
+                console.print("[yellow]Warning:[/yellow] --rename and --dry-run are ignored in --concat mode")
+            await _process_concat_files(
+                files, output_dir, page_pattern, include_page_headlines,
+                include_image_descriptions, confirm
+            )
+            return
 
         # Determine processing mode
         is_single_file = len(files) == 1
@@ -323,6 +343,114 @@ async def _process_multiple_files(
 
     except Exception as e:
         console.print(f"[ERROR] Error: [red]{e}[/red]")
+        raise typer.Exit(1)
+
+
+async def _process_concat_files(
+    files: List[Path],
+    output_dir: Optional[Path],
+    page_pattern: Optional[str],
+    include_page_headlines: bool,
+    include_image_descriptions: bool,
+    confirm: bool,
+):
+    """Process multiple files and concatenate into one output document."""
+    try:
+        # Load settings
+        settings = Settings()
+        settings.include_image_descriptions = include_image_descriptions
+
+        # Initialize OCR service
+        ocr_service = MistralOCRAdapter(settings)
+
+        console.print(f"[yellow]Concatenation mode:[/yellow] Processing {len(files)} files as pages of one document...")
+        if page_pattern:
+            console.print(f"Page pattern: [yellow]{page_pattern}[/yellow]")
+        if include_image_descriptions:
+            console.print("Image descriptions: [yellow]enabled[/yellow]")
+
+        # Confirm if requested
+        if confirm:
+            if not Confirm.ask(f"Process and concatenate {len(files)} files?", default=True):
+                console.print("[yellow]Operation cancelled[/yellow]")
+                return
+
+        # Process each file and collect markdown
+        page_contents = []
+        total_images_saved = 0
+        image_counter = 0
+
+        # Determine output directory for images
+        if output_dir:
+            base_output_dir = output_dir
+            base_output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            base_output_dir = files[0].parent / ".ocr"
+            base_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create temporary output manager for image materialization
+        temp_output_manager = OutputManager(base_output_dir, save_at_input_location=False)
+
+        for idx, file_path in enumerate(track(files, description="Processing pages..."), start=1):
+            try:
+                console.print(f"\n[cyan]Processing page {idx}:[/cyan] {file_path.name}")
+
+                # Process file
+                markdown, api_images = await ocr_service.process_file(file_path, page_pattern, False)
+
+                # Materialize images for this page using a unique prefix
+                page_prefix = f"page{idx}"
+                updated_markdown, saved_images = temp_output_manager._materialize_images(
+                    markdown, base_output_dir, page_prefix
+                )
+                total_images_saved += saved_images
+
+                # Add page header
+                page_header = f"### Page {idx}\n\n"
+                page_content = page_header + updated_markdown
+
+                page_contents.append(page_content)
+                console.print(f"  [green]Page {idx} processed[/green] ({saved_images} images saved)")
+
+            except Exception as e:
+                console.print(f"  [ERROR] Error processing {file_path.name}: [red]{e}[/red]")
+                page_contents.append(f"### Page {idx}\n\n**Error processing this page:** {e}\n")
+
+        # Combine all pages
+        combined_markdown = "\n\n".join(page_contents)
+
+        # Determine output location and filename
+        if output_dir:
+            output_file = output_dir / f"{files[0].stem}_combined.md"
+        else:
+            output_file = base_output_dir / f"{files[0].stem}_combined.md"
+
+        # Create metadata
+        metadata = OCRMetadata(
+            source_file=", ".join([str(f) for f in files]),
+            original_filename=", ".join([f.name for f in files]),
+            processed_at=datetime.now(),
+            content_length=len(combined_markdown),
+            include_page_headlines=True,  # Always true for concat mode
+            images_saved=total_images_saved,
+            filename_metadata=None
+        )
+
+        # Serialize to YAML frontmatter
+        yaml_dict = metadata.to_yaml_dict()
+        yaml_content = yaml.dump(yaml_dict, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        header = f"---\n{yaml_content}---\n\n"
+
+        # Write output
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(header)
+            f.write(combined_markdown)
+
+        console.print(f"\n[OK] Concatenated {len(files)} pages into: [blue]{output_file}[/blue]")
+        console.print(f"[INFO] Total images saved: {total_images_saved}")
+
+    except Exception as e:
+        console.print(f"[ERROR] Error in concatenation: [red]{e}[/red]")
         raise typer.Exit(1)
 
 
