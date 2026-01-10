@@ -10,7 +10,8 @@
       "Bash(ls:*)",
       "Bash(uv run:*)",
       "WebSearch",
-      "Bash(dir \"C:\\\\Users\\\\leona\\\\Downloads\\\\_from iPhone\\\\article\\\\IMG*\" /b)"
+      "Bash(dir \"C:\\\\Users\\\\leona\\\\Downloads\\\\_from iPhone\\\\article\\\\IMG*\" /b)",
+      "Bash(time uv run ocr:*)"
     ]
   }
 }

@@ -272,6 +272,51 @@ Processed 1 / 2 files successfully
 
 ---
 
+### Concurrent Processing Test
+
+**Test:**
+```bash
+# Process files concurrently (default: 3 workers)
+ocr ocr_test/Heunisch.pdf ocr_test/Kolarik.pdf ocr_test/"2020-10-01 Meldezettel Sompek Strasse.pdf" --rename --dry-run --concurrent 2
+```
+
+**Expected Behavior:**
+1. Processes up to 2 files simultaneously
+2. Output may appear in non-sequential order (concurrent execution)
+3. Faster processing for large batches
+4. Respects concurrency limit (max 10 workers)
+
+**Expected Output:**
+```
+Processing 3 files...
+Heunisch.pdf -> 2022-10-24 - Heunisch & Freun - Rechnung.pdf (Confidence: 0.9)
+2020-10-01 Meldezettel Sompek Strasse.pdf -> 2020-10-01 - Sompek Strasse - Meldezettel.pdf (Confidence: 0.9)
+Kolarik.pdf -> 2022-10-21 - Kolarik - Rechnung.pdf (Confidence: 0.9)
+```
+
+**Verbose Output:**
+```bash
+ocr ocr_test/*.pdf --rename --dry-run --concurrent 2 --verbose
+```
+```
+Processing 3 files...
+Image descriptions: enabled
+Concurrent processing: 2 files
+
+Using concurrent processing (2 workers)
+[Files process concurrently, output may be interleaved]
+```
+
+**Key Test:**
+- `--concurrent N` processes up to N files simultaneously
+- Default is 3 workers
+- Min: 1 (sequential), Max: 10 (capped for stability)
+- NOT compatible with `--confirm --rename` (falls back to sequential for user input)
+- Works with all modes: --dry-run, --rename, standard OCR
+- Verbose mode shows concurrent worker count
+
+---
+
 ## Testing Commands
 
 ```bash

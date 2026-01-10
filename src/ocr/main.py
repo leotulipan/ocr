@@ -77,6 +77,7 @@ def main(
     force: bool = typer.Option(False, "--force", help="Force regenerate filenames even if cached"),
     confidence: float = typer.Option(0.7, "--confidence", help="Minimum confidence threshold for accepting generated filenames (0.0-1.0, default: 0.7)"),
     verbose: bool = typer.Option(False, "--verbose", help="Show detailed processing information"),
+    concurrent: int = typer.Option(3, "--concurrent", help="Number of files to process concurrently (default: 3, max: 10)"),
     version: bool = typer.Option(None, "--version", "-v", callback=version_callback, is_eager=True, help="Show version and exit"),
 ):
     """OCR CLI - Process documents with Mistral AI.
@@ -89,7 +90,15 @@ def main(
         ocr magazine.pdf --image-descriptions
         ocr page1.jpg page2.jpg page3.jpg --concat --output combined.md
     """
-    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, concat, rename, dry_run, confirm, force, confidence, verbose))
+    # Validate concurrent parameter
+    if concurrent < 1:
+        console.print("[red]Error:[/red] --concurrent must be at least 1")
+        raise typer.Exit(1)
+    if concurrent > 10:
+        console.print("[yellow]Warning:[/yellow] --concurrent capped at 10 for stability")
+        concurrent = 10
+
+    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, concat, rename, dry_run, confirm, force, confidence, verbose, concurrent))
 
 
 async def _main(
@@ -105,6 +114,7 @@ async def _main(
     force: bool,
     confidence_threshold: float,
     verbose: bool,
+    concurrent: int,
 ):
     """Main processing logic."""
     try:
@@ -124,7 +134,7 @@ async def _main(
                 console.print("[yellow]Warning:[/yellow] --dry-run is ignored in --concat mode")
             await _process_concat_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, confirm, force, confidence_threshold, verbose
+                include_image_descriptions, rename, confirm, force, confidence_threshold, verbose, concurrent
             )
             return
 
@@ -140,7 +150,7 @@ async def _main(
         else:
             await _process_multiple_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, dry_run, confirm, force, confidence_threshold, verbose
+                include_image_descriptions, rename, dry_run, confirm, force, confidence_threshold, verbose, concurrent
             )
 
     except Exception as e:
@@ -323,8 +333,9 @@ async def _process_multiple_files(
     force: bool,
     confidence_threshold: float,
     verbose: bool,
+    concurrent: int,
 ):
-    """Process multiple files with optional batch rename."""
+    """Process multiple files with optional batch rename and concurrent processing."""
     try:
         # Load settings
         settings = Settings()
@@ -342,11 +353,22 @@ async def _process_multiple_files(
                 console.print("Including page headlines: [yellow]enabled[/yellow]")
             if include_image_descriptions:
                 console.print("Image descriptions: [yellow]enabled[/yellow]")
+            if concurrent > 1:
+                console.print(f"Concurrent processing: [yellow]{concurrent} files[/yellow]")
             console.print("")  # Add blank line for better readability
+
+        # Check if we can use concurrent processing
+        # Cannot use concurrent with confirm+rename (needs sequential user input)
+        use_concurrent = concurrent > 1 and not (confirm and rename and not dry_run)
+
+        if use_concurrent and verbose:
+            console.print(f"[cyan]Using concurrent processing ({concurrent} workers)[/cyan]")
+        elif not use_concurrent and concurrent > 1 and (confirm and rename and not dry_run):
+            console.print("[yellow]Sequential mode: --confirm with --rename requires user input per file[/yellow]")
 
         # Process each file
         results = []
-        if verbose:
+        if verbose and not use_concurrent:
             # Use progress bar in verbose mode
             for file_path in track(files, description="Processing files..."):
                 try:
@@ -360,8 +382,79 @@ async def _process_multiple_files(
                 except Exception as e:
                     console.print(f"[ERROR] Error processing {file_path.name}: [red]{e}[/red]")
                     results.append((file_path, "error", str(e)))
+        elif use_concurrent:
+            # Concurrent processing with semaphore
+            import asyncio
+            semaphore = asyncio.Semaphore(concurrent)
+
+            async def process_file_with_semaphore(file_path: Path):
+                async with semaphore:
+                    try:
+                        # Capture filename metadata for simple output
+                        filename_generator = FilenameGenerator(settings) if (rename or dry_run) else None
+
+                        if rename or dry_run:
+                            # Quick filename generation
+                            cached_filename = CacheManager.get_cached_filename(file_path, force=force)
+                            if cached_filename and not force:
+                                filename_metadata = cached_filename
+                            else:
+                                markdown_content = CacheManager.get_cached_markdown(file_path)
+                                if not markdown_content:
+                                    ocr_service = MistralOCRAdapter(settings)
+                                    markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
+
+                                filename_metadata = await filename_generator.analyze_content(
+                                    markdown_content,
+                                    pages_analyzed=1,
+                                    current_filename=file_path.name
+                                )
+
+                                # Check confidence and process all pages if needed
+                                if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                                    ocr_service = MistralOCRAdapter(settings)
+                                    full_markdown, _ = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
+                                    filename_metadata = await filename_generator.analyze_content(
+                                        full_markdown,
+                                        pages_analyzed=-1,
+                                        current_filename=file_path.name
+                                    )
+
+                            # Print simple output - show current -> new filename
+                            new_name = filename_generator.generate_filename_with_extension(
+                                filename_metadata.generated_filename, file_path
+                            )
+                            console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
+
+                            # Perform rename if not dry-run
+                            if rename and not dry_run:
+                                from .utils.file_renamer import FileRenamer
+                                new_source, new_ocr = FileRenamer.rename_file_pair(
+                                    file_path,
+                                    filename_metadata.generated_filename,
+                                    dry_run=False
+                                )
+                                console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
+
+                            return (file_path, "success", filename_metadata)
+                        else:
+                            # Non-rename mode
+                            await _process_single_file(
+                                file_path, output_dir, page_pattern, include_page_headlines,
+                                include_image_descriptions, rename, dry_run, confirm, force,
+                                confidence_threshold, verbose
+                            )
+                            return (file_path, "success", None)
+                    except Exception as e:
+                        console.print(f"[ERROR] Error processing {file_path.name}: [red]{e}[/red]")
+                        return (file_path, "error", str(e))
+
+            # Run all tasks concurrently
+            results = await asyncio.gather(*[process_file_with_semaphore(f) for f in files])
+            results = list(results)  # Convert to list
+
         else:
-            # Simple output without progress bar for non-verbose mode
+            # Sequential processing without progress bar (non-verbose mode)
             for file_path in files:
                 try:
                     # Capture filename metadata for simple output
@@ -464,6 +557,7 @@ async def _process_concat_files(
     force: bool,
     confidence_threshold: float,
     verbose: bool,
+    concurrent: int,
 ):
     """Process multiple files and concatenate into one output document."""
     try:
