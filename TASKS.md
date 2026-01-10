@@ -30,17 +30,16 @@
   [x] Document installation process in README.md
   [x] Resolve OneDrive permission issues by moving project to local directory
   [x] Update shell PATH with `uv tool update-shell`
+[x] ocr --rename --dry-run => show the current AND the new filename not just the new filename
+[x] ocr --rename (without dry-run) verified working correctly
+[x] --confirm now asks y/n for each file individually in batch mode
+[x] Added --concurrent flag (default: 3, max: 10) for async processing to speed up folder processing
+[x] Enhanced filename prompt with date priority rules: Dates >10 years are likely DOB, prioritize sample/examination dates for medical records
+[x] Removed empty "ocr_output" directory creation - now created lazily only when actually needed
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## In Progress Tasks
 -------------------------------------------------------------------------------------------------------------------------------
-
-[x] ocr --rename --dry-run => we need to show the current AND the new filename not just the new filename
-[x] ocr --rename (without dry-run) does not do anything currently - VERIFIED WORKING
-[x] --confirm now asks y/n for each file individually in batch mode
-[x] Added --concurrent flag (default: 3, max: 10) for async processing to speed up folder processing
-[x] Enhanced filename prompt with date priority rules: Dates >10 years are likely DOB, prioritize sample/examination dates for medical records
-[ ] when running in a target folder an empty "ocr_output" is generated. remove that feature entirely
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## Future Tasks

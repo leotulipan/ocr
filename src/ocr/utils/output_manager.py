@@ -20,8 +20,7 @@ class OutputManager:
         """Initialize output manager."""
         self.output_dir = output_dir or Path.cwd() / "ocr_output"
         self.save_at_input_location = save_at_input_location
-        if not save_at_input_location:
-            self.output_dir.mkdir(exist_ok=True)
+        # Don't create directory in __init__ - create it lazily when needed
 
     def _ensure_images_dir(self, base_dir: Path) -> Path:
         """Ensure an `images` directory exists next to the markdown file."""
