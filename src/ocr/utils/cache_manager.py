@@ -53,11 +53,23 @@ class CacheManager:
                 filename_metadata = None
                 if "filename_metadata" in metadata_dict and metadata_dict["filename_metadata"]:
                     fm_data = metadata_dict["filename_metadata"]
+
+                    # Handle backward compatibility: convert old string confidence to float
+                    confidence_raw = fm_data.get("confidence")
+                    confidence = None
+                    if confidence_raw is not None:
+                        if isinstance(confidence_raw, (int, float)):
+                            confidence = float(confidence_raw)
+                        elif isinstance(confidence_raw, str):
+                            # Convert old string values to float
+                            confidence_map = {"high": 0.9, "medium": 0.5, "low": 0.2}
+                            confidence = confidence_map.get(confidence_raw.lower(), 0.5)
+
                     filename_metadata = FilenameMetadata(
                         generated_filename=fm_data.get("generated_filename", ""),
                         generation_timestamp=datetime.fromisoformat(fm_data.get("generation_timestamp", datetime.now().isoformat())),
                         generation_method=fm_data.get("generation_method", "unknown"),
-                        confidence=fm_data.get("confidence"),
+                        confidence=confidence,
                         extracted_date=fm_data.get("extracted_date"),
                         extracted_company=fm_data.get("extracted_company"),
                         extracted_summary=fm_data.get("extracted_summary"),

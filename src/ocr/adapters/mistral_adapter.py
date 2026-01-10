@@ -108,14 +108,11 @@ class MistralOCRAdapter(OCRService):
         """Collect a mapping of image filename -> {mime, base64} from the OCR response pages."""
         images_map = {}
         total_images = 0
-        print(f"DEBUG: Processing {len(pages_to_process)} pages")
         for i in pages_to_process:
             page = response.pages[i]
             images = getattr(page, "images", []) or []
-            print(f"DEBUG: Page {i+1} has {len(images)} images")
             total_images += len(images)
             for j, img in enumerate(images):
-                print(f"DEBUG: Image {j} on page {i+1}: {type(img)}")
                 # Try different attribute names for OCRImageObject
                 filename = getattr(img, "filename", None) or getattr(img, "name", None) or getattr(img, "id", None)
                 # According to Mistral documentation, image data is in image_base64 attribute
@@ -156,7 +153,6 @@ class MistralOCRAdapter(OCRService):
                     else:
                         mime = "image/jpeg"  # Default to jpeg
                 images_map[filename] = {"mime": mime, "base64": b64}
-        print(f"DEBUG: Total images collected: {len(images_map)}")
         return images_map, total_images
 
     def _generate_markdown(self, response: OCRResponse, page_pattern: Optional[str] = None, 

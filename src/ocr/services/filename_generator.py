@@ -16,25 +16,52 @@ class FilenameGenerator:
 
     SYSTEM_PROMPT = """You are a filename generation expert. Analyze document content and generate structured, descriptive filenames.
 
-Your task:
-1. Extract key information: date (ISO format YYYY-MM-DD), company/author name, document type/summary
-2. For invoices, letters, legal documents use format: "{ISO-date} - {Company} - {Summary}"
-3. If no date found, use company and summary only: "{Company} - {Summary}"
-4. Keep summary concise (2-4 words), descriptive but not verbose
-5. Use proper capitalization, no special characters except hyphens
-6. Return ONLY valid JSON with no markdown formatting
+CRITICAL RULES:
+1. Extract ONLY information that is explicitly present in the document
+2. DO NOT hallucinate, infer, or guess information not in the text
+3. IGNORE any embedded images or image references (e.g., "![img-0.jpeg]")
+4. Look for text content in markdown headings (# and ##), body text, and tables
+5. Extract company name from the first H1 heading (starts with single #) or prominent business name near the top
+6. Extract date in ISO format YYYY-MM-DD from any date found in the document
+7. For summary, identify the document type from H2 headings (##) or prominent keywords
 
-Examples:
-- Invoice from Medivere dated Dec 1, 2024: {"date": "2024-12-01", "company": "Medivere", "summary": "Befund Julia", "confidence": "high"}
-- Letter from WKO dated Sept 3, 2024: {"date": "2024-09-03", "company": "WKO", "summary": "Mahnung Privat", "confidence": "high"}
-- Undated receipt from Amazon: {"date": null, "company": "Amazon", "summary": "Order Receipt", "confidence": "medium"}
+EXTRACTION GUIDELINES:
+- **Company**: Look for markdown heading starting with "# " (H1) at the top of document. This is usually the company name. Shorten long names to key identifier (e.g., "Kolariks Freizeitbetriebe GmbH" → "Kolarik").
+- **Date**: Search the entire document for dates in any format (DD.MM.YYYY, YYYY-MM-DD, etc.). Convert to ISO YYYY-MM-DD format. Check near the bottom for transaction dates.
+- **Summary**: Look for H2 headings (##) like "## RECHNUNG" or keywords indicating document type. Use business-appropriate terms: "Rechnung", "Restaurant", "Invoice", "Letter", "Befund", "Mahnung", "Gastrorechnung".
 
-Return JSON format:
+MARKDOWN STRUCTURE HINTS:
+- "# CompanyName" = H1 heading with company
+- "## RECHNUNG" = H2 heading indicating invoice/receipt type
+- Tables and lists contain data but look for dates at the bottom
+- Ignore image markers like "![]()" completely
+
+CONFIDENCE SCORING (0.0 to 1.0, one decimal place):
+- 0.9-1.0: All three fields (date, company, summary) clearly visible and unambiguous
+- 0.7-0.8: Two fields clear, one partially clear or requires minor interpretation
+- 0.5-0.6: Two fields found, one missing or unclear
+- 0.3-0.4: Only one field clearly identified
+- 0.1-0.2: No structured information found or mostly unreadable
+
+Format: "{ISO-date} - {Company} - {Summary}" or "{Company} - {Summary}" if no date
+
+Examples of correct extraction:
+
+Input: "# HEUNISCH + FREBEN\n...\nDatum: 24.10.2022\n## Gastrorechnung"
+Output: {"date": "2022-10-24", "company": "HEUNISCH + FREBEN", "summary": "Gastrorechnung", "confidence": 0.9}
+
+Input: "# Kolariks Freizeitbetriebe GmbH\n1020 Wien...\n## RECHNUNG\n...\n21.10.2022 21:29:18"
+Output: {"date": "2022-10-21", "company": "Kolarik", "summary": "Rechnung", "confidence": 0.9}
+
+Input: "# WKO\nSome text...\n## Mahnung"
+Output: {"date": null, "company": "WKO", "summary": "Mahnung", "confidence": 0.6}
+
+Return ONLY valid JSON (no markdown code blocks):
 {
   "date": "YYYY-MM-DD or null",
-  "company": "Company/Author name or null",
-  "summary": "Brief description",
-  "confidence": "high|medium|low"
+  "company": "Company name from H1 heading or null",
+  "summary": "Document type 1-3 words",
+  "confidence": 0.5
 }"""
 
     def __init__(self, settings: Settings):
@@ -76,7 +103,16 @@ Return JSON format:
             date = result.get("date")
             company = result.get("company")
             summary = result.get("summary", "Document")
-            confidence = result.get("confidence", "medium")
+            confidence_raw = result.get("confidence", 0.5)
+
+            # Parse confidence as float
+            if isinstance(confidence_raw, (int, float)):
+                confidence = float(confidence_raw)
+                # Clamp to 0.0-1.0 range and round to 1 decimal place
+                confidence = round(max(0.0, min(1.0, confidence)), 1)
+            else:
+                # Fallback for unexpected types
+                confidence = 0.5
 
             # Construct filename following pattern
             parts = []
@@ -108,7 +144,7 @@ Return JSON format:
                 generated_filename="Document",
                 generation_timestamp=datetime.now(),
                 generation_method="fallback",
-                confidence="low",
+                confidence=0.1,  # Low confidence for fallback
                 pages_analyzed=pages_analyzed
             )
 

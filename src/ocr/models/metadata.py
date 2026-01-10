@@ -12,7 +12,7 @@ class FilenameMetadata(BaseModel):
     generated_filename: str
     generation_timestamp: datetime
     generation_method: str = Field(default="mistral-small-2506")
-    confidence: Optional[str] = None  # "high", "medium", "low"
+    confidence: Optional[float] = None  # 0.0 (low) to 1.0 (high), e.g., 0.5 for medium
     extracted_date: Optional[str] = None
     extracted_company: Optional[str] = None
     extracted_summary: Optional[str] = None

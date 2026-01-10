@@ -180,11 +180,13 @@ async def _process_single_file(
                 console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
 
                 # Step 5: Check if first page analysis was sufficient
-                if filename_metadata.confidence == "low":
-                    console.print("[yellow]Low confidence, processing all pages...[/yellow]")
+                # Confidence < 0.5 is considered low and triggers full document processing
+                if filename_metadata.confidence is not None and filename_metadata.confidence < 0.5:
+                    console.print(f"[yellow]Low confidence ({filename_metadata.confidence}), processing all pages...[/yellow]")
                     full_markdown, _ = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
                     filename_metadata = await filename_generator.analyze_content(full_markdown, pages_analyzed=-1)
                     console.print(f"[green]Updated filename:[/green] {filename_metadata.generated_filename}")
+                    console.print(f"[cyan]Updated confidence:[/cyan] {filename_metadata.confidence}")
                     markdown_content = full_markdown
                     pages_processed = -1  # Indicates all pages
 
@@ -198,7 +200,7 @@ async def _process_single_file(
                     filename_metadata=filename_metadata,
                     pages_processed=pages_processed
                 )
-                console.print(f"✓ Saved OCR result to: [blue]{output_file}[/blue]")
+                console.print(f"[OK] Saved OCR result to: [blue]{output_file}[/blue]")
 
             # Step 7: Handle dry-run
             if dry_run:
@@ -240,8 +242,8 @@ async def _process_single_file(
                 filename_metadata=filename_metadata,
                 pages_processed=pages_processed
             )
-            console.print(f"✓ Saved result to: [blue]{output_file}[/blue]")
-            console.print(f"📊 API returned {api_images} images, saved {saved_images} images")
+            console.print(f"[OK] Saved result to: [blue]{output_file}[/blue]")
+            console.print(f"[INFO] API returned {api_images} images, saved {saved_images} images")
 
         # Perform rename if requested
         if rename and filename_metadata:
@@ -251,11 +253,11 @@ async def _process_single_file(
                 filename_metadata.generated_filename,
                 dry_run=False
             )
-            console.print(f"✓ Renamed to: [green]{new_source.name}[/green]")
-            console.print(f"✓ OCR file: [green]{new_ocr.name}[/green]")
+            console.print(f"[OK] Renamed to: [green]{new_source.name}[/green]")
+            console.print(f"[OK] OCR file: [green]{new_ocr.name}[/green]")
 
     except Exception as e:
-        console.print(f"❌ Error processing {file_path}: [red]{e}[/red]")
+        console.print(f"[ERROR] Error processing {file_path}: [red]{e}[/red]")
         raise typer.Exit(1)
 
 
@@ -295,7 +297,7 @@ async def _process_multiple_files(
                 )
                 results.append((file_path, "success"))
             except Exception as e:
-                console.print(f"❌ Error processing {file_path.name}: [red]{e}[/red]")
+                console.print(f"[ERROR] Error processing {file_path.name}: [red]{e}[/red]")
                 results.append((file_path, f"error: {e}"))
 
         # Create summary table
@@ -304,14 +306,14 @@ async def _process_multiple_files(
         table.add_column("Status", style="green")
 
         for file_path, status in results:
-            status_text = "✓ Success" if status == "success" else f"❌ {status}"
+            status_text = "[OK] Success" if status == "success" else f"[ERROR] {status}"
             table.add_row(file_path.name, status_text)
 
         console.print(table)
         console.print(f"[green]Processed {len([r for r in results if r[1] == 'success'])} / {len(results)} files successfully[/green]")
 
     except Exception as e:
-        console.print(f"❌ Error: [red]{e}[/red]")
+        console.print(f"[ERROR] Error: [red]{e}[/red]")
         raise typer.Exit(1)
 
 
