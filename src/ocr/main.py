@@ -131,12 +131,6 @@ async def _main(
         # Determine processing mode
         is_single_file = len(files) == 1
 
-        # Batch confirmation
-        if confirm and not is_single_file:
-            if not Confirm.ask(f"Process {len(files)} files?", default=True):
-                console.print("[yellow]Operation cancelled[/yellow]")
-                return
-
         # Process files
         if is_single_file:
             await _process_single_file(
@@ -400,11 +394,30 @@ async def _process_multiple_files(
                                     current_filename=file_path.name
                                 )
 
+                        # Handle confirmation for this file
+                        if confirm and rename and not dry_run:
+                            from .utils.file_renamer import FileRenamer
+                            if not FileRenamer.confirm_rename(file_path, filename_metadata.generated_filename):
+                                console.print(f"[yellow]Skipped:[/yellow] {file_path.name}")
+                                results.append((file_path, "skipped", filename_metadata))
+                                continue
+
                         # Print simple output - show current -> new filename
                         new_name = filename_generator.generate_filename_with_extension(
                             filename_metadata.generated_filename, file_path
                         )
                         console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
+
+                        # Perform rename if not dry-run
+                        if rename and not dry_run:
+                            from .utils.file_renamer import FileRenamer
+                            new_source, new_ocr = FileRenamer.rename_file_pair(
+                                file_path,
+                                filename_metadata.generated_filename,
+                                dry_run=False
+                            )
+                            console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
+
                         results.append((file_path, "success", filename_metadata))
                     else:
                         # Non-rename mode

@@ -224,6 +224,52 @@ Renaming files...
 - Collision detection with counter suffix if file exists
 - Rollback on failure (atomic operation)
 
+**Note:** After test, rename back: `mv "ocr_test/2022-10-21 - Kolarik - Rechnung.pdf" ocr_test/Kolarik.pdf`
+
+---
+
+### Per-File Confirmation Test
+
+**Test:**
+```bash
+# Test per-file confirmation (answer 'n' for first, 'y' for second)
+echo -e "n\ny\n" | ocr ocr_test/Heunisch.pdf ocr_test/Kolarik.pdf --rename --confirm --force
+```
+
+**Expected Behavior:**
+1. Processes each file individually
+2. Asks for confirmation before renaming each file
+3. First file: User says "n" - file is skipped, not renamed
+4. Second file: User says "y" - file is renamed
+5. Shows summary at end
+
+**Expected Output:**
+```
+Processing 2 files...
+
+Proposed rename:
+  From: Heunisch.pdf
+  To:   2022-10-24 - Heunisch & Freun - Rechnung.pdf
+Proceed with rename? [y/n] (y): Skipped: Heunisch.pdf
+
+Proposed rename:
+  From: Kolarik.pdf
+  To:   2022-10-21 - Kolarik - Rechnung.pdf
+Proceed with rename? [y/n] (y): Kolarik.pdf -> 2022-10-21 - Kolarik - Rechnung.pdf (Confidence: 0.9)
+  [OK] Renamed to: 2022-10-21 - Kolarik - Rechnung.pdf
+
+Processed 1 / 2 files successfully
+```
+
+**Key Test:**
+- Confirmation is asked for EACH file individually (not just once for all files)
+- Skipped files don't count as success
+- Renamed files show success message
+- Works in both simple and verbose modes
+- Only applies when using `--rename` (not `--dry-run`)
+
+**Note:** After test, rename back: `mv "ocr_test/2022-10-21 - Kolarik - Rechnung.pdf" ocr_test/Kolarik.pdf`
+
 ---
 
 ## Testing Commands

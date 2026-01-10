@@ -37,7 +37,7 @@
 
 [x] ocr --rename --dry-run => we need to show the current AND the new filename not just the new filename
 [x] ocr --rename (without dry-run) does not do anything currently - VERIFIED WORKING
-[ ] --confirm as well does not ask y/n for each file only for the overall folder
+[x] --confirm now asks y/n for each file individually in batch mode
 [ ] Start work on async with a flag --concurrent which defaults to 3 to have 3 OCR tasks running at the same time to speed up folder processing.
 [ ] Add to filename prompt: Dates older than 10 years ago (e.g. 2015) are most likely DOB. Especially for medical records look for a "sample taking date" or the like and only use the date of birth if no other (current) date can be found
 [ ] when running in a target folder an empty "ocr_output" is generated. remove that feature entirely

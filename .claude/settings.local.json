@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv add:*)",
+      "Bash(uv tool install:*)",
+      "Bash(ocr:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m *)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(uv run:*)",
+      "WebSearch",
+      "Bash(dir \"C:\\\\Users\\\\leona\\\\Downloads\\\\_from iPhone\\\\article\\\\IMG*\" /b)"
+    ]
+  }
+}
