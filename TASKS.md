@@ -37,12 +37,11 @@
 [x] Enhanced filename prompt with date priority rules: Dates >10 years are likely DOB, prioritize sample/examination dates for medical records
 [x] Removed empty "ocr_output" directory creation - now created lazily only when actually needed
 [x] Skip files that are already correctly named - read frontmatter to check if current filename matches generated filename, skip unnecessary AI calls, show "[OK] ... (already correct)" in output
+[x] Display red warning in --dry-run mode when confidence is below the threshold (default 0.7) - helps identify files needing manual review
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## In Progress Tasks
--------------------------------------------------------------------------------------------------------------------------------
-
-[ ] on --dry-run output a Warning in Red for filenames underneath the confidence threshold being used 
+------------------------------------------------------------------------------------------------------------------------------- 
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## Future Tasks

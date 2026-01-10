@@ -279,10 +279,16 @@ async def _process_single_file(
                 # Show current -> new filename
                 if not verbose and filename_metadata:
                     console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
+                    # Warn if below confidence threshold
+                    if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                        console.print(f"  [red]WARNING: Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})[/red]")
                 elif verbose:
                     console.print(f"[cyan]Current:[/cyan] {file_path.name}")
                     console.print(f"[green]New:[/green] {new_name}")
                     console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
+                    # Warn if below confidence threshold
+                    if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                        console.print(f"[red]WARNING: Confidence below threshold ({confidence_threshold})[/red]")
                 return
 
             # Step 8: Handle confirmation
@@ -445,6 +451,10 @@ async def _process_multiple_files(
                             )
                             console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
 
+                            # Warn if below confidence threshold in dry-run
+                            if dry_run and filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                                console.print(f"  [red]WARNING: Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})[/red]")
+
                             # Perform rename if not dry-run
                             if rename and not dry_run:
                                 from .utils.file_renamer import FileRenamer
@@ -525,6 +535,10 @@ async def _process_multiple_files(
                             filename_metadata.generated_filename, file_path
                         )
                         console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
+
+                        # Warn if below confidence threshold in dry-run
+                        if dry_run and filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                            console.print(f"  [red]WARNING: Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})[/red]")
 
                         # Perform rename if not dry-run
                         if rename and not dry_run:

@@ -424,6 +424,69 @@ Using cached filename: 2022-10-21 - Kolarik - Rechnung
 
 ---
 
+### Low Confidence Warning Test
+
+**Scenario:** Display red warning in dry-run mode when confidence is below the threshold
+
+**Test (Single File):**
+```bash
+# Use custom confidence threshold to trigger warning
+uv run ocr ocr_test/Heunisch.pdf --rename --dry-run --confidence 0.95
+```
+
+**Expected Output:**
+```
+Heunisch.pdf -> 2022-10-24 - Heunisch & Freun - Rechnung.pdf (Confidence: 0.9)
+  WARNING: Confidence (0.9) below threshold (0.95)
+```
+
+**Batch Processing Test:**
+```bash
+uv run ocr ocr_test/Heunisch.pdf "ocr_test/2020-10-01 Meldezettel Sompek Strasse.pdf" --rename --dry-run --confidence 0.95
+```
+
+**Expected Output:**
+```
+Processing 2 files...
+Heunisch.pdf -> 2022-10-24 - Heunisch & Freun - Rechnung.pdf (Confidence: 0.9)
+  WARNING: Confidence (0.9) below threshold (0.95)
+2020-10-01 Meldezettel Sompek Strasse.pdf -> 2020-10-01 - Sompek Strasse - Meldezettel.pdf (Confidence: 0.9)
+  WARNING: Confidence (0.9) below threshold (0.95)
+```
+
+**Verbose Mode Test:**
+```bash
+uv run ocr ocr_test/Heunisch.pdf --rename --dry-run --confidence 0.95 --verbose
+```
+
+**Expected Output:**
+```
+Filename generation mode enabled
+Using cached filename: 2022-10-24 - Heunisch & Freun - Rechnung
+
+DRY RUN - No files will be renamed
+Current: Heunisch.pdf
+New: 2022-10-24 - Heunisch & Freun - Rechnung.pdf
+Confidence: 0.9
+WARNING: Confidence below threshold (0.95)
+```
+
+**Key Test:**
+- Warning displayed in RED when confidence is below threshold
+- Default threshold is 0.7 (can be changed with `--confidence` flag)
+- Warning shows both the actual confidence and the threshold value
+- Works in all modes: single file, batch, concurrent, and verbose
+- Only shown in dry-run mode (not during actual rename operations)
+- Helps user identify files that may need manual review before renaming
+
+**Use Cases:**
+- Quality control: Identify files with ambiguous or unclear metadata
+- Batch operations: Spot-check low confidence files before mass renaming
+- Custom thresholds: Adjust sensitivity based on document quality expectations
+- Safety: Prevents automatic renaming of poorly analyzed documents
+
+---
+
 ## Testing Commands
 
 ```bash
