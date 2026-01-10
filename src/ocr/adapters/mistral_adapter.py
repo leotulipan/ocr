@@ -4,11 +4,18 @@ import base64
 from pathlib import Path
 from typing import List, Optional, Set
 from mistralai import Mistral, OCRResponse
+from mistralai.extra import response_format_from_pydantic_model
+from pydantic import BaseModel, Field
 import json
 
 from ..protocols.ocr_service import OCRService
 from ..models.settings import Settings
 from ..utils.page_parser import PagePatternParser
+
+
+class ImageDescription(BaseModel):
+    """Model for image descriptions from bbox annotations."""
+    description: str = Field(..., description="Detailed description of what is visible in the image")
 
 
 class MistralOCRAdapter(OCRService):
@@ -155,7 +162,7 @@ class MistralOCRAdapter(OCRService):
                 images_map[filename] = {"mime": mime, "base64": b64}
         return images_map, total_images
 
-    def _generate_markdown(self, response: OCRResponse, page_pattern: Optional[str] = None, 
+    def _generate_markdown(self, response: OCRResponse, page_pattern: Optional[str] = None,
                           include_page_headlines: bool = False) -> tuple[str, int]:
         """Generate markdown from OCR response with optional filtering and headlines."""
         if not page_pattern:
@@ -166,14 +173,42 @@ class MistralOCRAdapter(OCRService):
             total_pages = len(response.pages)
             selected_pages = PagePatternParser.parse_pattern(page_pattern, total_pages)
             pages_to_process = [i for i in range(len(response.pages)) if i + 1 in selected_pages]
-        
+
         if not pages_to_process:
             return "No pages match the specified pattern.", 0
-        
+
         markdown_parts = []
         for i in pages_to_process:
             page_num = i + 1  # Convert to 1-indexed
             page_content = response.pages[i].markdown
+
+            # Add image descriptions if available
+            if self.settings.include_image_descriptions:
+                page = response.pages[i]
+                images = getattr(page, "images", []) or []
+                for img in images:
+                    img_id = getattr(img, "id", None) or getattr(img, "filename", None)
+                    img_annotation = getattr(img, "image_annotation", None)
+
+                    if img_id and img_annotation:
+                        # Parse annotation if it's JSON
+                        try:
+                            if isinstance(img_annotation, str):
+                                annotation_data = json.loads(img_annotation)
+                                description = annotation_data.get("description", img_annotation)
+                            else:
+                                description = str(img_annotation)
+                        except json.JSONDecodeError:
+                            description = str(img_annotation)
+
+                        # Replace image reference with image + description
+                        image_pattern = f"![{img_id}]({img_id})"
+                        if image_pattern in page_content:
+                            page_content = page_content.replace(
+                                image_pattern,
+                                f"{image_pattern}\n\n**Image Description:** {description}\n"
+                            )
+
             if include_page_headlines:
                 markdown_parts.append(f"### Page {page_num}\n{page_content}")
             else:
@@ -209,12 +244,18 @@ class MistralOCRAdapter(OCRService):
         # Process with Mistral OCR
         document_dict = {"type": document_type}
         document_dict[url_field] = data_url
-        
-        response: OCRResponse = self.client.ocr.process(
-            model="mistral-ocr-latest",
-            document=document_dict,
-            include_image_base64=True
-        )
+
+        # Add bbox_annotation_format if image descriptions are enabled
+        ocr_kwargs = {
+            "model": "mistral-ocr-latest",
+            "document": document_dict,
+            "include_image_base64": True
+        }
+
+        if self.settings.include_image_descriptions:
+            ocr_kwargs["bbox_annotation_format"] = response_format_from_pydantic_model(ImageDescription)
+
+        response: OCRResponse = self.client.ocr.process(**ocr_kwargs)
         
         # Generate markdown with optional filtering and headlines
         markdown, total_images = self._generate_markdown(response, page_pattern, include_page_headlines)

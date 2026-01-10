@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     filename_generation_max_tokens: int = 500  # Larger for full-document analysis
     filename_generation_temperature: float = 0.0  # Deterministic
 
+    # Image description settings
+    include_image_descriptions: bool = False  # Enable image descriptions via bbox_annotation_format
+
     model_config = SettingsConfigDict(
         env_file=get_env_file_path(),
         env_file_encoding='utf-8',

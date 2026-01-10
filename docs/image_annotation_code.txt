@@ -1,0 +1,32 @@
+from mistralai import Mistral
+from mistralai.extra import response_format_from_pydantic_model
+from pydantic import BaseModel, Field
+
+client = Mistral(api_key="YOUR_API_KEY")
+
+# Define image description format
+class ImageDesc(BaseModel):
+    description: str = Field(..., description="Description of the image")
+
+# OCR with image descriptions
+response = client.ocr.process(
+    model="mistral-ocr-latest",
+    document={"type": "document_url", "document_url": f"data:application/pdf;base64,{base64_pdf}"},
+    bbox_annotation_format=response_format_from_pydantic_model(ImageDesc),
+    include_image_base64=True
+)
+
+# Combine markdown with image descriptions
+def get_markdown(ocr_response):
+    result = []
+    for page in ocr_response.pages:
+        md = page.markdown
+        for img in page.images:
+            md = md.replace(
+                f"![{img.id}]({img.id})",
+                f"![{img.id}]({img.image_base64})\n\n**{img.image_annotation}**"
+            )
+        result.append(md)
+    return "\n\n".join(result)
+
+markdown_output = get_markdown(response)

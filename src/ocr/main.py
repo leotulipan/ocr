@@ -65,6 +65,7 @@ def main(
     output: Optional[Path] = typer.Option(None, "-o", "--output", help="Output directory (default: save next to source for single file, ocr_output for multiple)"),
     pages: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')"),
     page_headlines: bool = typer.Option(False, "--page-headlines", help="Include page numbers as markdown headlines"),
+    image_descriptions: bool = typer.Option(False, "--image-descriptions", help="Include AI-generated descriptions for embedded images"),
     rename: bool = typer.Option(False, "--rename", help="Enable intelligent filename generation and renaming"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show suggested filenames without renaming"),
     confirm: bool = typer.Option(False, "--confirm", help="Ask for confirmation before operations"),
@@ -78,8 +79,9 @@ def main(
         ocr invoice1.pdf invoice2.pdf
         ocr ./invoices/
         ocr *.pdf --rename
+        ocr magazine.pdf --image-descriptions
     """
-    asyncio.run(_main(paths, output, pages, page_headlines, rename, dry_run, confirm, force))
+    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, rename, dry_run, confirm, force))
 
 
 async def _main(
@@ -87,6 +89,7 @@ async def _main(
     output_dir: Optional[Path],
     page_pattern: Optional[str],
     include_page_headlines: bool,
+    include_image_descriptions: bool,
     rename: bool,
     dry_run: bool,
     confirm: bool,
@@ -114,12 +117,12 @@ async def _main(
         if is_single_file:
             await _process_single_file(
                 files[0], output_dir, page_pattern, include_page_headlines,
-                rename, dry_run, confirm, force
+                include_image_descriptions, rename, dry_run, confirm, force
             )
         else:
             await _process_multiple_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                rename, dry_run, confirm, force
+                include_image_descriptions, rename, dry_run, confirm, force
             )
 
     except Exception as e:
@@ -132,6 +135,7 @@ async def _process_single_file(
     output_dir: Optional[Path],
     page_pattern: Optional[str],
     include_page_headlines: bool,
+    include_image_descriptions: bool,
     rename: bool,
     dry_run: bool,
     confirm: bool,
@@ -141,6 +145,7 @@ async def _process_single_file(
     try:
         # Load settings
         settings = Settings()
+        settings.include_image_descriptions = include_image_descriptions
 
         # Initialize OCR service
         ocr_service = MistralOCRAdapter(settings)
@@ -266,6 +271,7 @@ async def _process_multiple_files(
     output_dir: Optional[Path],
     page_pattern: Optional[str],
     include_page_headlines: bool,
+    include_image_descriptions: bool,
     rename: bool,
     dry_run: bool,
     confirm: bool,
@@ -275,6 +281,7 @@ async def _process_multiple_files(
     try:
         # Load settings
         settings = Settings()
+        settings.include_image_descriptions = include_image_descriptions
 
         # For batch: default to project ocr_output unless user provided --output
         save_at_input_location = False
@@ -285,6 +292,8 @@ async def _process_multiple_files(
             console.print(f"Page pattern: [yellow]{page_pattern}[/yellow]")
         if include_page_headlines:
             console.print("Including page headlines: [yellow]enabled[/yellow]")
+        if include_image_descriptions:
+            console.print("Image descriptions: [yellow]enabled[/yellow]")
 
         # Process each file
         results = []
@@ -293,7 +302,7 @@ async def _process_multiple_files(
                 # Use single-file logic for each file to support rename/dry-run
                 await _process_single_file(
                     file_path, output_dir, page_pattern, include_page_headlines,
-                    rename, dry_run, confirm, force
+                    include_image_descriptions, rename, dry_run, confirm, force
                 )
                 results.append((file_path, "success"))
             except Exception as e:
