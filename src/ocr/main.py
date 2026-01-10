@@ -116,11 +116,11 @@ async def _main(
             if len(files) < 2:
                 console.print("[red]Error:[/red] --concat requires at least 2 files")
                 raise typer.Exit(1)
-            if rename or dry_run:
-                console.print("[yellow]Warning:[/yellow] --rename and --dry-run are ignored in --concat mode")
+            if dry_run:
+                console.print("[yellow]Warning:[/yellow] --dry-run is ignored in --concat mode")
             await _process_concat_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, confirm
+                include_image_descriptions, rename, confirm, force
             )
             return
 
@@ -352,7 +352,9 @@ async def _process_concat_files(
     page_pattern: Optional[str],
     include_page_headlines: bool,
     include_image_descriptions: bool,
+    rename: bool,
     confirm: bool,
+    force: bool,
 ):
     """Process multiple files and concatenate into one output document."""
     try:
@@ -375,21 +377,16 @@ async def _process_concat_files(
                 console.print("[yellow]Operation cancelled[/yellow]")
                 return
 
-        # Process each file and collect markdown
+        # Process each file, save individual OCR files for caching, and collect markdown
         page_contents = []
         total_images_saved = 0
-        image_counter = 0
 
-        # Determine output directory for images
-        if output_dir:
-            base_output_dir = output_dir
-            base_output_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            base_output_dir = files[0].parent / ".ocr"
-            base_output_dir.mkdir(parents=True, exist_ok=True)
+        # Determine base output directory (.ocr subdirectory for individual files and images)
+        base_ocr_dir = files[0].parent / ".ocr"
+        base_ocr_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create temporary output manager for image materialization
-        temp_output_manager = OutputManager(base_output_dir, save_at_input_location=False)
+        # Create output manager for saving individual OCR files (for caching)
+        individual_output_manager = OutputManager(None, save_at_input_location=True)
 
         for idx, file_path in enumerate(track(files, description="Processing pages..."), start=1):
             try:
@@ -398,19 +395,37 @@ async def _process_concat_files(
                 # Process file
                 markdown, api_images = await ocr_service.process_file(file_path, page_pattern, False)
 
-                # Materialize images for this page using a unique prefix
-                page_prefix = f"page{idx}"
-                updated_markdown, saved_images = temp_output_manager._materialize_images(
-                    markdown, base_output_dir, page_prefix
+                # Save individual OCR file for caching (in .ocr subdirectory)
+                individual_output_file, saved_images = individual_output_manager.save_text_result(
+                    markdown,
+                    file_path.stem,
+                    file_path,
+                    include_page_headlines=False,  # No page headlines in individual files
+                    filename_metadata=None,
+                    pages_processed=1  # Each file treated as single page for caching
                 )
                 total_images_saved += saved_images
 
-                # Add page header
+                # Extract just the markdown content (without YAML frontmatter) for concatenation
+                # Read the saved file and extract content after frontmatter
+                with open(individual_output_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Remove YAML frontmatter
+                    if content.startswith('---'):
+                        parts = content.split('---', 2)
+                        if len(parts) >= 3:
+                            markdown_only = parts[2].strip()
+                        else:
+                            markdown_only = content
+                    else:
+                        markdown_only = content
+
+                # Add page header for concatenation
                 page_header = f"### Page {idx}\n\n"
-                page_content = page_header + updated_markdown
+                page_content = page_header + markdown_only
 
                 page_contents.append(page_content)
-                console.print(f"  [green]Page {idx} processed[/green] ({saved_images} images saved)")
+                console.print(f"  [green]Page {idx} processed[/green] (OCR file: {individual_output_file.name}, {saved_images} images)")
 
             except Exception as e:
                 console.print(f"  [ERROR] Error processing {file_path.name}: [red]{e}[/red]")
@@ -419,11 +434,44 @@ async def _process_concat_files(
         # Combine all pages
         combined_markdown = "\n\n".join(page_contents)
 
-        # Determine output location and filename
+        # Clean up empty images directory if no images were saved
+        images_dir = base_ocr_dir / "images"
+        if total_images_saved == 0 and images_dir.exists():
+            try:
+                images_dir.rmdir()
+                console.print(f"[INFO] Removed empty images directory")
+            except OSError:
+                pass  # Directory not empty or other issue, skip
+
+        # Determine output location and filename (save in parent directory, not .ocr)
         if output_dir:
-            output_file = output_dir / f"{files[0].stem}_combined.md"
+            output_file = output_dir / f"{files[0].stem}.md"
         else:
-            output_file = base_output_dir / f"{files[0].stem}_combined.md"
+            # Save in the directory of the first file (not in .ocr subdirectory)
+            output_file = files[0].parent / f"{files[0].stem}.md"
+
+        # Handle rename mode
+        filename_metadata = None
+        if rename:
+            console.print(f"\n[yellow]Generating intelligent filename for concatenated document...[/yellow]")
+            filename_generator = FilenameGenerator(settings)
+            filename_metadata = await filename_generator.analyze_content(
+                combined_markdown,
+                pages_analyzed=len(files)
+            )
+            console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
+            console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
+
+            # Update output filename
+            output_file = output_file.parent / f"{filename_metadata.generated_filename}.md"
+
+            # Confirm if requested
+            if confirm:
+                new_name = f"{filename_metadata.generated_filename}.md"
+                if not Confirm.ask(f"Use filename '{new_name}'?", default=True):
+                    console.print("[yellow]Using original filename instead[/yellow]")
+                    output_file = files[0].parent / f"{files[0].stem}.md"
+                    filename_metadata = None
 
         # Create metadata
         metadata = OCRMetadata(
@@ -433,7 +481,7 @@ async def _process_concat_files(
             content_length=len(combined_markdown),
             include_page_headlines=True,  # Always true for concat mode
             images_saved=total_images_saved,
-            filename_metadata=None
+            filename_metadata=filename_metadata
         )
 
         # Serialize to YAML frontmatter
@@ -448,6 +496,7 @@ async def _process_concat_files(
 
         console.print(f"\n[OK] Concatenated {len(files)} pages into: [blue]{output_file}[/blue]")
         console.print(f"[INFO] Total images saved: {total_images_saved}")
+        console.print(f"[INFO] Individual OCR files saved in: [blue]{base_ocr_dir}[/blue]")
 
     except Exception as e:
         console.print(f"[ERROR] Error in concatenation: [red]{e}[/red]")

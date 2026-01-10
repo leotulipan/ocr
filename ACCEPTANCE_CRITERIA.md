@@ -86,6 +86,31 @@ ocr ocr_test/Heunisch.pdf ocr_test/Kolarik.pdf --concat
 
 ---
 
+### 5. Concatenate Image Files (IMG_0466.JPG + IMG_0468.JPG)
+Concatenate multiple image files into one output treating each as a page
+
+**Command:**
+```bash
+ocr ocr_test/IMG_0466.JPG ocr_test/IMG_0468.JPG --concat
+```
+
+**Expected Output:**
+- One combined markdown file: `IMG_0466.md` saved in `ocr_test/` directory (NOT in `.ocr/`)
+- Individual cached OCR files saved: `ocr_test/.ocr/IMG_0466.pg1.md` and `ocr_test/.ocr/IMG_0468.pg1.md`
+- Page headers added: "### Page 1", "### Page 2"
+- No images directory created if no images extracted
+- Metadata shows both source files and original filenames
+- YAML frontmatter includes `images_saved: 0` and `include_page_headlines: true`
+
+**Key Test:**
+- Files concatenated in order specified
+- Individual OCR files preserved for caching (prevents re-OCR on subsequent runs)
+- Combined file saved in parent directory (not in `.ocr/` subdirectory)
+- Empty `.ocr/images/` directory not created when no images exist
+- Default filename is first file's stem with `.md` extension
+
+---
+
 ## Testing Commands
 
 ```bash

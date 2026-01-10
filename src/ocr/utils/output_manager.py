@@ -52,7 +52,7 @@ class OutputManager:
         if not markdown_content:
             return markdown_content, 0
 
-        images_dir = self._ensure_images_dir(base_dir)
+        images_dir = None  # Create lazily only when needed
         saved_count = 0
         counter = 0
 
@@ -81,12 +81,15 @@ class OutputManager:
         )
 
         def replace_data_uri(m: re.Match) -> str:
-            nonlocal saved_count, counter
+            nonlocal saved_count, counter, images_dir
             alt = m.group("alt")
             ext = m.group("ext").lower().split("+")[0]
             b64 = m.group("b64")
             counter += 1
             filename = f"{prefix}_{counter}.{ext}"
+            # Create images directory only when needed
+            if images_dir is None:
+                images_dir = self._ensure_images_dir(base_dir)
             out_path = images_dir / filename
             try:
                 data = base64.b64decode(b64)
@@ -108,12 +111,15 @@ class OutputManager:
         )
 
         def replace_url(m: re.Match) -> str:
-            nonlocal saved_count, counter
+            nonlocal saved_count, counter, images_dir
             alt = m.group("alt")
             url = m.group("url")
             counter += 1
             ext = self._guess_ext_from_url(url)
             filename = f"{prefix}_{counter}{ext}"
+            # Create images directory only when needed
+            if images_dir is None:
+                images_dir = self._ensure_images_dir(base_dir)
             out_path = images_dir / filename
             try:
                 with urllib.request.urlopen(url, timeout=30) as resp:
@@ -134,7 +140,7 @@ class OutputManager:
             file_img_re = re.compile(r'!\[(?P<alt>.*?)\]\((?P<fname>[^)\s]+)\)')
 
             def replace_file_link(m: re.Match) -> str:
-                nonlocal saved_count, counter
+                nonlocal saved_count, counter, images_dir
                 alt = m.group("alt")
                 fname = m.group("fname")
                 info = images_map.get(fname)
@@ -159,6 +165,9 @@ class OutputManager:
                     ext = Path(fname).suffix or ".png"
                 counter += 1
                 filename = f"{prefix}_{counter}{ext}"
+                # Create images directory only when needed
+                if images_dir is None:
+                    images_dir = self._ensure_images_dir(base_dir)
                 out_path = images_dir / filename
                 try:
                     data = base64.b64decode(b64)
