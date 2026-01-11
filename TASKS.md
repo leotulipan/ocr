@@ -38,14 +38,21 @@
 [x] Removed empty "ocr_output" directory creation - now created lazily only when actually needed
 [x] Skip files that are already correctly named - read frontmatter to check if current filename matches generated filename, skip unnecessary AI calls, show "[OK] ... (already correct)" in output
 [x] Display red warning in --dry-run mode when confidence is below the threshold (default 0.7) - helps identify files needing manual review
+[x] Save OCR results immediately before stdout output for Ctrl-C resilience - ensures interrupted batch operations don't lose completed work
+[x] Add --force-ocr and --force-filename flags for granular control - allows regenerating just OCR or just filename independently, --force remains as shorthand for both
+[x] Enhance prompt to clean garbled filenames from previous OCR - detects corrupted characters, mojibake, special ASCII artifacts and matches against high-quality Mistral OCR content to reconstruct intended meaning
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## In Progress Tasks
 ------------------------------------------------------------------------------------------------------------------------------- 
 
+[ ] add file modified/created date from filesystem to the prompt if no other date (or only a DOB) is found in the file and it doesnt make sense to use the date of birth for that filename
+
 -------------------------------------------------------------------------------------------------------------------------------
 ## Future Tasks
 -------------------------------------------------------------------------------------------------------------------------------
+
+[ ] 1946-10-19_levensbewljs اLebensbescheinigung.pg1.md
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## Implementation Plan

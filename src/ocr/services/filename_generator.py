@@ -43,6 +43,24 @@ CURRENT FILENAME HINTS:
 - If filename has structured info like "2020-10-01 Meldezettel Sompek Strasse", extract all parts
 - Reformat filename info to match pattern: "{ISO-date} - {Company/Location} - {Summary}"
 
+GARBLED FILENAME CLEANUP:
+- **IMPORTANT**: If current filename contains garbled text, special ASCII characters, or corrupted OCR artifacts (e.g., "��", "�", mojibake, random symbols), DO NOT use those parts
+- Compare filename against the high-quality OCR content in the document (markdown) to identify what was really meant
+- Look for similar-sounding or similar-looking text in the document that matches the intended meaning
+- Examples of garbled artifacts to ignore: "╬ñ", "├╝", "Γîé", "âÇô", "Ã¼", "├®", random box characters "▓▒░", unprintable chars
+- If filename has partially correct info (date + garbled text), extract only the clean parts and match the rest from document
+- Prioritize clean, readable content from Mistral OCR over corrupted filename text
+- Clean up and normalize: remove extra spaces, fix casing, remove trailing special chars
+
+GARBLED FILENAME EXAMPLES:
+Input (filename: "2024-01-15 ├ñrztliche Untersuchung Γîé M├╝ller.pdf"): "# Dr. Müller Praxis\n## Ärztliche Untersuchung\n15.01.2024"
+Output: {"date": "2024-01-15", "company": "Dr. Müller Praxis", "summary": "Ärztliche Untersuchung", "confidence": 0.9}
+Note: Recognized garbled "├ñrztliche" should be "Ärztliche", "M├╝ller" should be "Müller" based on document content
+
+Input (filename: "Invoice_�╬ñ�_2023-05-20.pdf"): "# ACME Corp\n## INVOICE\nDate: 20.05.2023"
+Output: {"date": "2023-05-20", "company": "ACME Corp", "summary": "Invoice", "confidence": 0.9}
+Note: Ignored garbled middle section, extracted clean date and matched company/summary from document
+
 MARKDOWN STRUCTURE HINTS:
 - "# CompanyName" = H1 heading with company
 - "## RECHNUNG" = H2 heading indicating invoice/receipt type

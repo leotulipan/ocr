@@ -74,7 +74,9 @@ def main(
     rename: bool = typer.Option(False, "--rename", help="Enable intelligent filename generation and renaming"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show suggested filenames without renaming"),
     confirm: bool = typer.Option(False, "--confirm", help="Ask for confirmation before operations"),
-    force: bool = typer.Option(False, "--force", help="Force regenerate filenames even if cached"),
+    force: bool = typer.Option(False, "--force", help="Force regenerate both OCR and filenames (equivalent to --force-ocr --force-filename)"),
+    force_ocr: bool = typer.Option(False, "--force-ocr", help="Force re-OCR even if cached OCR exists"),
+    force_filename: bool = typer.Option(False, "--force-filename", help="Force regenerate filename even if cached"),
     confidence: float = typer.Option(0.7, "--confidence", help="Minimum confidence threshold for accepting generated filenames (0.0-1.0, default: 0.7)"),
     verbose: bool = typer.Option(False, "--verbose", help="Show detailed processing information"),
     concurrent: int = typer.Option(3, "--concurrent", help="Number of files to process concurrently (default: 3, max: 10)"),
@@ -98,7 +100,12 @@ def main(
         console.print("[yellow]Warning:[/yellow] --concurrent capped at 10 for stability")
         concurrent = 10
 
-    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, concat, rename, dry_run, confirm, force, confidence, verbose, concurrent))
+    # Handle --force as shorthand for both flags
+    if force:
+        force_ocr = True
+        force_filename = True
+
+    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, concat, rename, dry_run, confirm, force_ocr, force_filename, confidence, verbose, concurrent))
 
 
 async def _main(
@@ -111,7 +118,8 @@ async def _main(
     rename: bool,
     dry_run: bool,
     confirm: bool,
-    force: bool,
+    force_ocr: bool,
+    force_filename: bool,
     confidence_threshold: float,
     verbose: bool,
     concurrent: int,
@@ -134,7 +142,7 @@ async def _main(
                 console.print("[yellow]Warning:[/yellow] --dry-run is ignored in --concat mode")
             await _process_concat_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, confirm, force, confidence_threshold, verbose, concurrent
+                include_image_descriptions, rename, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent
             )
             return
 
@@ -145,12 +153,12 @@ async def _main(
         if is_single_file:
             await _process_single_file(
                 files[0], output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, dry_run, confirm, force, confidence_threshold, verbose
+                include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose
             )
         else:
             await _process_multiple_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, dry_run, confirm, force, confidence_threshold, verbose, concurrent
+                include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent
             )
 
     except Exception as e:
@@ -173,7 +181,8 @@ async def _process_single_file(
     rename: bool,
     dry_run: bool,
     confirm: bool,
-    force: bool,
+    force_ocr: bool,
+    force_filename: bool,
     confidence_threshold: float,
     verbose: bool,
 ):
@@ -202,8 +211,8 @@ async def _process_single_file(
             filename_generator = FilenameGenerator(settings)
 
             # Step 1: Check cache
-            cached_filename = CacheManager.get_cached_filename(file_path, force=force)
-            if cached_filename and not force:
+            cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
+            if cached_filename and not force_filename:
                 if verbose:
                     console.print(f"[green]Using cached filename:[/green] {cached_filename.generated_filename}")
                 filename_metadata = cached_filename
@@ -216,8 +225,8 @@ async def _process_single_file(
                         console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
                     return
             else:
-                # Step 2: Try to get cached markdown to avoid re-OCR
-                markdown_content = CacheManager.get_cached_markdown(file_path)
+                # Step 2: Try to get cached markdown to avoid re-OCR (unless force_ocr is set)
+                markdown_content = CacheManager.get_cached_markdown(file_path) if not force_ocr else None if not force_ocr else None
 
                 if not markdown_content:
                     # Step 3: OCR first page only
@@ -350,7 +359,8 @@ async def _process_multiple_files(
     rename: bool,
     dry_run: bool,
     confirm: bool,
-    force: bool,
+    force_ocr: bool,
+    force_filename: bool,
     confidence_threshold: float,
     verbose: bool,
     concurrent: int,
@@ -395,7 +405,7 @@ async def _process_multiple_files(
                     # Use single-file logic for each file to support rename/dry-run
                     await _process_single_file(
                         file_path, output_dir, page_pattern, include_page_headlines,
-                        include_image_descriptions, rename, dry_run, confirm, force,
+                        include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename,
                         confidence_threshold, verbose
                     )
                     results.append((file_path, "success", None))
@@ -415,8 +425,8 @@ async def _process_multiple_files(
 
                         if rename or dry_run:
                             # Quick filename generation
-                            cached_filename = CacheManager.get_cached_filename(file_path, force=force)
-                            if cached_filename and not force:
+                            cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
+                            if cached_filename and not force_filename:
                                 filename_metadata = cached_filename
 
                                 # Check if file is already correctly named
@@ -424,10 +434,13 @@ async def _process_multiple_files(
                                     console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
                                     return (file_path, "skipped", filename_metadata)
                             else:
-                                markdown_content = CacheManager.get_cached_markdown(file_path)
+                                markdown_content = CacheManager.get_cached_markdown(file_path) if not force_ocr else None
                                 if not markdown_content:
                                     ocr_service = MistralOCRAdapter(settings)
                                     markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
+                                    pages_processed = 1
+                                else:
+                                    pages_processed = 1  # Cached content
 
                                 filename_metadata = await filename_generator.analyze_content(
                                     markdown_content,
@@ -444,6 +457,20 @@ async def _process_multiple_files(
                                         pages_analyzed=-1,
                                         current_filename=file_path.name
                                     )
+                                    markdown_content = full_markdown
+                                    pages_processed = -1  # All pages
+
+                                # Save OCR result BEFORE printing (Ctrl-C resilience)
+                                output_manager = OutputManager(output_dir, save_at_input_location=True)
+                                await asyncio.to_thread(
+                                    output_manager.save_text_result,
+                                    markdown_content,
+                                    file_path.stem,
+                                    file_path,
+                                    include_page_headlines,
+                                    filename_metadata,
+                                    pages_processed
+                                )
 
                             # Print simple output - show current -> new filename
                             new_name = filename_generator.generate_filename_with_extension(
@@ -491,8 +518,8 @@ async def _process_multiple_files(
 
                     if rename or dry_run:
                         # Quick filename generation
-                        cached_filename = CacheManager.get_cached_filename(file_path, force=force)
-                        if cached_filename and not force:
+                        cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
+                        if cached_filename and not force_filename:
                             filename_metadata = cached_filename
 
                             # Check if file is already correctly named
@@ -501,10 +528,13 @@ async def _process_multiple_files(
                                 results.append((file_path, "skipped", filename_metadata))
                                 continue
                         else:
-                            markdown_content = CacheManager.get_cached_markdown(file_path)
+                            markdown_content = CacheManager.get_cached_markdown(file_path) if not force_ocr else None
                             if not markdown_content:
                                 ocr_service = MistralOCRAdapter(settings)
                                 markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
+                                pages_processed = 1
+                            else:
+                                pages_processed = 1  # Cached content
 
                             filename_metadata = await filename_generator.analyze_content(
                                 markdown_content,
@@ -521,6 +551,20 @@ async def _process_multiple_files(
                                     pages_analyzed=-1,
                                     current_filename=file_path.name
                                 )
+                                markdown_content = full_markdown
+                                pages_processed = -1  # All pages
+
+                            # Save OCR result BEFORE printing (Ctrl-C resilience)
+                            batch_output_manager = OutputManager(output_dir, save_at_input_location=True)
+                            await asyncio.to_thread(
+                                batch_output_manager.save_text_result,
+                                markdown_content,
+                                file_path.stem,
+                                file_path,
+                                include_page_headlines,
+                                filename_metadata,
+                                pages_processed
+                            )
 
                         # Handle confirmation for this file
                         if confirm and rename and not dry_run:
@@ -602,7 +646,8 @@ async def _process_concat_files(
     include_image_descriptions: bool,
     rename: bool,
     confirm: bool,
-    force: bool,
+    force_ocr: bool,
+    force_filename: bool,
     confidence_threshold: float,
     verbose: bool,
     concurrent: int,
