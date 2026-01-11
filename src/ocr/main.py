@@ -22,6 +22,9 @@ from .utils.cache_manager import CacheManager
 from .utils.file_renamer import FileRenamer
 from .utils.error_handler import ErrorHandler
 from .utils.progress_manager import ProgressManager
+from .utils.lock_manager import FileLock
+from .services.folder_watcher import FolderWatcher
+from .services.processing_queue import ProcessingQueue
 
 
 app = typer.Typer()
@@ -898,6 +901,166 @@ async def _process_concat_files(
     except Exception as e:
         console.print(f"[ERROR] Error in concatenation: [red]{e}[/red]")
         raise typer.Exit(1)
+
+
+@app.command()
+def watch(
+    folder: Path = typer.Argument(..., help="Folder to watch for new files"),
+    rename: bool = typer.Option(False, "--rename", help="Automatically rename files with intelligent filenames"),
+    concurrent: int = typer.Option(3, "--concurrent", "-c", min=1, max=10, help="Number of concurrent files to process"),
+    recursive: bool = typer.Option(False, "--recursive", "-r", help="Watch subdirectories recursively"),
+    confidence_threshold: float = typer.Option(0.7, "--confidence", min=0.0, max=1.0, help="Minimum confidence threshold for filename generation"),
+    filename_model: str = typer.Option("mistral-small-2506", "--filename-model", help="Model to use for filename generation"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
+):
+    """Watch a folder for new files and process them automatically.
+
+    Monitors the specified folder for new files and automatically processes them
+    with OCR. Optionally renames files with intelligent filenames based on content.
+
+    Example:
+        ocr watch ~/Downloads --rename --concurrent 5
+    """
+    try:
+        # Validate folder exists
+        if not folder.exists():
+            console.print(f"[red]Error:[/red] Folder does not exist: {folder}")
+            raise typer.Exit(1)
+
+        if not folder.is_dir():
+            console.print(f"[red]Error:[/red] Path is not a directory: {folder}")
+            raise typer.Exit(1)
+
+        # Load settings
+        settings = Settings()
+
+        # Override filename generation model if specified
+        if filename_model != "mistral-small-2506":
+            settings.filename_generation_model = filename_model
+
+        # Create shared Mistral client
+        from mistralai import Mistral
+        shared_client = Mistral(api_key=settings.mistral_api_key.get_secret_value())
+
+        console.print(f"\n[cyan]Watch Mode[/cyan]")
+        console.print(f"Folder: [blue]{folder.absolute()}[/blue]")
+        console.print(f"Rename: [yellow]{'enabled' if rename else 'disabled'}[/yellow]")
+        console.print(f"Concurrent: [yellow]{concurrent} files[/yellow]")
+        console.print(f"Recursive: [yellow]{'yes' if recursive else 'no'}[/yellow]")
+        if rename:
+            console.print(f"Confidence threshold: [yellow]{confidence_threshold}[/yellow]")
+        console.print()
+
+        # Create processing queue
+        queue = ProcessingQueue(max_concurrent=concurrent)
+
+        # Define file processor
+        async def process_file_with_lock(file_path: Path):
+            """Process a file with lock to prevent duplicates."""
+            # Use file lock to prevent duplicate processing
+            with FileLock(file_path) as locked:
+                if not locked:
+                    console.print(f"[yellow]Skipped (locked): {file_path.name}[/yellow]")
+                    return
+
+                console.print(f"[cyan]Processing: {file_path.name}[/cyan]")
+
+                # Create components for this file
+                ocr_service = MistralOCRAdapter(settings, shared_client)
+                output_manager = OutputManager(save_at_input_location=True)
+
+                if rename:
+                    # Process with filename generation
+                    filename_generator = FilenameGenerator(settings, shared_client)
+
+                    filename_metadata, markdown_content, pages_processed = await _generate_filename_for_file(
+                        file_path,
+                        ocr_service,
+                        filename_generator,
+                        output_manager,
+                        force_ocr=False,
+                        force_filename=False,
+                        confidence_threshold=confidence_threshold,
+                        include_page_headlines=False,
+                        page_pattern=None,
+                        verbose=verbose
+                    )
+
+                    # Skip if already correctly named
+                    if pages_processed == 0:
+                        console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
+                        return
+
+                    # Perform rename
+                    new_source, new_ocr = FileRenamer.rename_file_pair(
+                        file_path,
+                        filename_metadata.generated_filename,
+                        dry_run=False
+                    )
+                    console.print(f"[green][OK] Renamed to: {new_source.name}[/green] (Confidence: {filename_metadata.confidence})")
+                else:
+                    # Process without renaming
+                    markdown, api_images = await ocr_service.process_file(file_path, None, False)
+                    output_file, saved_images = await output_manager.save_text_result(
+                        markdown,
+                        file_path.stem,
+                        file_path,
+                        include_page_headlines=False,
+                        filename_metadata=None,
+                        pages_processed=1
+                    )
+                    console.print(f"[green][OK] Processed: {file_path.name}[/green]")
+
+        # Define callback for new files
+        async def on_file_ready(file_path: Path):
+            """Called when a new file is ready for processing."""
+            queue.add_job(file_path)
+
+        # Create folder watcher
+        watcher = FolderWatcher(
+            folder_path=folder,
+            on_file_ready=on_file_ready,
+            recursive=recursive
+        )
+
+        # Start watch mode
+        async def run_watch():
+            """Run watch mode with queue processing."""
+            queue.start(process_file_with_lock)
+            watcher.start()
+
+            console.print("[green]Press Ctrl+C to stop watching[/green]\n")
+
+            try:
+                # Keep running until interrupted
+                while True:
+                    await asyncio.sleep(1)
+
+                    # Show stats periodically (every 30 seconds)
+                    stats = queue.get_stats()
+                    if stats["total"] > 0 and stats["total"] % 10 == 0:
+                        console.print(f"[dim]Stats: {stats['completed']} completed, {stats['processing']} processing, {stats['failed']} failed[/dim]")
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Stopping watch mode...[/yellow]")
+                watcher.stop()
+                await queue.stop()
+
+                # Show final stats
+                stats = queue.get_stats()
+                console.print(f"\n[cyan]Final Stats:[/cyan]")
+                console.print(f"  Completed: [green]{stats['completed']}[/green]")
+                console.print(f"  Failed: [red]{stats['failed']}[/red]")
+                console.print(f"  Total: {stats['total']}")
+
+        # Run in asyncio event loop
+        asyncio.run(run_watch())
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Watch mode stopped[/yellow]")
+        raise typer.Exit(0)
+    except Exception as e:
+        exit_code = ErrorHandler.handle_error(e, verbose=verbose)
+        raise typer.Exit(exit_code)
 
 
 if __name__ == "__main__":
