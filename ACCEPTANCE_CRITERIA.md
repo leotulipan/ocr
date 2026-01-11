@@ -719,33 +719,76 @@ echo "Exit code: $?"
 
 ---
 
-## Sprint 3: Polish (PLANNED)
+## Sprint 3: Polish ✅ COMPLETED
 
 ### 3.1 Async Image Downloads
 
-**Status:** ⏳ PENDING
+**Status:** ✅ COMPLETED
 
 **Acceptance Criteria:**
-- [ ] `aiohttp` dependency added
-- [ ] Image downloads use async HTTP client
-- [ ] `_materialize_images()` is async
-- [ ] All callers updated to await
+- [x] `aiohttp` dependency added to pyproject.toml
+- [x] Image downloads use async HTTP client (aiohttp.ClientSession)
+- [x] `_materialize_images()` is async with concurrent URL downloads
+- [x] All callers updated to await (save_text_result, save_batch_results)
 
-**Test:** TBD
+**Implementation Details:**
+- Added aiohttp>=3.9.0 to dependencies
+- Refactored _materialize_images() to use async/await pattern
+- URL downloads now happen concurrently using asyncio.gather
+- All images from different URLs downloaded in parallel instead of sequentially
+- save_text_result() and save_batch_results() now async methods
+
+**Test:**
+```bash
+# Test with single file
+uv run ocr ocr_test/Heunisch.pdf --dry-run
+
+# Test with concurrent processing
+uv run ocr ocr_test/*.pdf --dry-run --concurrent 2
+```
+
+**Expected:** No errors, async downloads working in background
+
+**Result:** ✅ PASS - All downloads working, no blocking IO
 
 ---
 
 ### 3.2 Progress Manager
 
-**Status:** ⏳ PENDING
+**Status:** ✅ COMPLETED
 
 **Acceptance Criteria:**
-- [ ] `src/ocr/utils/progress_manager.py` created
-- [ ] Rich progress bar with spinner, percentage, ETA
-- [ ] Works with concurrent processing
-- [ ] Verbose mode shows details
+- [x] `src/ocr/utils/progress_manager.py` created
+- [x] Rich progress bar with spinner, percentage, ETA
+- [x] Works with concurrent processing (asyncio.gather)
+- [x] Verbose mode shows detailed progress, simple mode suppresses
 
-**Test:** TBD
+**Implementation Details:**
+- Created ProgressManager class as context manager
+- Uses Rich Progress with: SpinnerColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn, TimeRemainingColumn
+- Integrates with concurrent processing - updates after each file completes
+- Only shows progress bar when verbose=True
+- Simple mode continues to show file-by-file output without progress bar
+
+**Test:**
+```bash
+# Test verbose mode with progress bar
+uv run ocr ocr_test/Heunisch.pdf ocr_test/Kolarik.pdf --dry-run --concurrent 2 --verbose
+
+# Test simple mode (no progress bar)
+uv run ocr ocr_test/*.pdf --dry-run
+```
+
+**Expected Output (Verbose Mode):**
+```
+Processing 2 files...
+Using concurrent processing (2 workers)
+Heunisch.pdf -> 2022-10-24 - HEUNISCH & FREUN - Rechnung.pdf (Confidence: 0.9)
+Kolarik.pdf -> Document.pdf (Confidence: 0.1)
+  Processing 2 files concurrently ------------------------ 100% 0:00:00 0:00:00
+```
+
+**Result:** ✅ PASS - Progress bar shows in verbose mode, updates correctly
 
 ---
 
@@ -833,6 +876,12 @@ time uv run ocr ./ocr_test/*.pdf --dry-run
 **Result:** 18.3 seconds (4 PDFs) - consolidation complete, smart caching working
 **API Call Reduction:** ~50% for low-confidence multi-page documents (estimated)
 
+### Sprint 3 Target
+**Target:** Async downloads, progress tracking
+**Result:** Async image downloads working, progress bars in verbose mode
+**Performance Impact:** Non-blocking IO for images, concurrent URL downloads
+**UX Improvement:** Real-time progress tracking with Rich progress bars
+
 ---
 
 ## Success Criteria
@@ -850,10 +899,11 @@ time uv run ocr ./ocr_test/*.pdf --dry-run
 - [x] Error handler with exit codes (0-6)
 - [x] ~50% API call reduction for low-confidence multi-page docs
 
-### Sprint 3 (Future)
-- [ ] Async downloads
-- [ ] Progress bars
-- [ ] Better concurrency
+### Sprint 3 ✅
+- [x] Async image downloads with aiohttp
+- [x] Progress bars with Rich (verbose mode)
+- [x] Non-blocking IO for concurrent URL downloads
+- [x] ProgressManager integrated with concurrent processing
 
 ### Sprint 4 (Future)
 - [ ] Watch mode functional
