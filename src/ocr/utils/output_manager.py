@@ -1,13 +1,14 @@
 """Output manager for OCR processing results."""
 
+import asyncio
 import json
 import re
 import base64
 import yaml
+import aiohttp
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
-import urllib.request
 import urllib.parse
 
 from ..models.metadata import OCRMetadata, FilenameMetadata
@@ -39,7 +40,7 @@ class OutputManager:
             pass
         return default_ext
 
-    def _materialize_images(self, markdown_content: str, base_dir: Path, prefix: str) -> Tuple[str, int]:
+    async def _materialize_images(self, markdown_content: str, base_dir: Path, prefix: str) -> Tuple[str, int]:
         """
         Extract embedded base64 images and download URL images referenced in markdown.
         Save them under base_dir/images with filenames prefixed by `prefix`, and rewrite
@@ -104,35 +105,61 @@ class OutputManager:
 
         updated = data_uri_re.sub(replace_data_uri, markdown_content)
 
-        # External URLs
+        # External URLs - async download with aiohttp
         url_img_re = re.compile(
             r'!\[(?P<alt>.*?)\]\((?P<url>https?://[^\s)]+)\)'
         )
 
-        def replace_url(m: re.Match) -> str:
-            nonlocal saved_count, counter, images_dir
-            alt = m.group("alt")
-            url = m.group("url")
-            counter += 1
-            ext = self._guess_ext_from_url(url)
-            filename = f"{prefix}_{counter}{ext}"
-            # Create images directory only when needed
-            if images_dir is None:
-                images_dir = self._ensure_images_dir(base_dir)
-            out_path = images_dir / filename
-            try:
-                with urllib.request.urlopen(url, timeout=30) as resp:
-                    content = resp.read()
-                with open(out_path, "wb") as f:
-                    f.write(content)
-                saved_count += 1
-                print(f"downloaded image: {url} -> images/{filename}")
-                return f"![{alt}](images/{filename})"
-            except Exception:
-                # Leave original on failure
-                return m.group(0)
+        # First pass: collect all URLs
+        url_matches = list(url_img_re.finditer(updated))
 
-        updated = url_img_re.sub(replace_url, updated)
+        if url_matches:
+            # Download all URLs concurrently
+            downloaded_images = {}
+            async with aiohttp.ClientSession() as session:
+                download_tasks = []
+                for m in url_matches:
+                    url = m.group("url")
+                    download_tasks.append(self._download_image(session, url))
+
+                # Wait for all downloads to complete
+                results = await asyncio.gather(*download_tasks, return_exceptions=True)
+
+                # Map URLs to downloaded content
+                for m, result in zip(url_matches, results):
+                    if not isinstance(result, Exception) and result is not None:
+                        downloaded_images[m.group("url")] = result
+
+            # Second pass: replace with downloaded images
+            def replace_url(m: re.Match) -> str:
+                nonlocal saved_count, counter, images_dir
+                alt = m.group("alt")
+                url = m.group("url")
+
+                # Check if we successfully downloaded this URL
+                content = downloaded_images.get(url)
+                if content is None:
+                    # Download failed, leave original
+                    return m.group(0)
+
+                counter += 1
+                ext = self._guess_ext_from_url(url)
+                filename = f"{prefix}_{counter}{ext}"
+                # Create images directory only when needed
+                if images_dir is None:
+                    images_dir = self._ensure_images_dir(base_dir)
+                out_path = images_dir / filename
+                try:
+                    with open(out_path, "wb") as f:
+                        f.write(content)
+                    saved_count += 1
+                    print(f"downloaded image: {url} -> images/{filename}")
+                    return f"![{alt}](images/{filename})"
+                except Exception as e:
+                    print(f"Error saving image {filename}: {e}")
+                    return m.group(0)
+
+            updated = url_img_re.sub(replace_url, updated)
 
         # Materialize images from images_map by replacing bare filenames in links if present
         if images_map:
@@ -181,8 +208,21 @@ class OutputManager:
 
             updated = file_img_re.sub(replace_file_link, updated)
         return updated, saved_count
+
+    async def _download_image(self, session: aiohttp.ClientSession, url: str) -> Optional[bytes]:
+        """Download image from URL using aiohttp."""
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status == 200:
+                    return await response.read()
+                else:
+                    print(f"Failed to download {url}: HTTP {response.status}")
+                    return None
+        except Exception as e:
+            print(f"Error downloading {url}: {e}")
+            return None
     
-    def save_text_result(self, content: str, filename: str, source_file: Path = None,
+    async def save_text_result(self, content: str, filename: str, source_file: Path = None,
                         include_page_headlines: bool = False,
                         filename_metadata: Optional[FilenameMetadata] = None,
                         pages_processed: int = 1) -> tuple[Path, int]:
@@ -210,8 +250,8 @@ class OutputManager:
         # Create output directory if it doesn't exist
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Materialize images and rewrite markdown
-        updated_content, img_count = self._materialize_images(content, output_dir, prefix)
+        # Materialize images and rewrite markdown (async)
+        updated_content, img_count = await self._materialize_images(content, output_dir, prefix)
 
         # Store original filename
         original_filename = source_file.name if source_file else None
@@ -237,14 +277,14 @@ class OutputManager:
             f.write(updated_content)
 
         return output_file, img_count
-    
-    def save_batch_results(self, results: List[str], filenames: List[str], 
+
+    async def save_batch_results(self, results: List[str], filenames: List[str],
                           source_files: List[Path] = None, include_page_headlines: bool = False) -> List[tuple[Path, int]]:
         """Save multiple OCR results to files."""
         output_files = []
         for i, (content, filename) in enumerate(zip(results, filenames)):
             source_file = source_files[i] if source_files and i < len(source_files) else None
-            output_file, img_count = self.save_text_result(content, filename, source_file, include_page_headlines)
+            output_file, img_count = await self.save_text_result(content, filename, source_file, include_page_headlines)
             output_files.append((output_file, img_count))
         return output_files
     

@@ -21,6 +21,7 @@ from .services.filename_generator import FilenameGenerator
 from .utils.cache_manager import CacheManager
 from .utils.file_renamer import FileRenamer
 from .utils.error_handler import ErrorHandler
+from .utils.progress_manager import ProgressManager
 
 
 app = typer.Typer()
@@ -380,7 +381,7 @@ async def _process_single_file(
 
             # Step 6: Save markdown even for dry-run
             if markdown_content:
-                output_file, saved_images = output_manager.save_text_result(
+                output_file, saved_images = await output_manager.save_text_result(
                     markdown_content,
                     file_path.stem,
                     file_path,
@@ -436,7 +437,7 @@ async def _process_single_file(
 
         # Save result with filename metadata (if not already saved)
         if not markdown_content or not (rename or dry_run):
-            output_file, saved_images = output_manager.save_text_result(
+            output_file, saved_images = await output_manager.save_text_result(
                 result,
                 file_path.stem,
                 file_path,
@@ -529,81 +530,93 @@ async def _process_multiple_files(
             import asyncio
             semaphore = asyncio.Semaphore(concurrent)
 
-            async def process_file_with_semaphore(file_path: Path):
-                async with semaphore:
-                    try:
-                        if rename or dry_run:
-                            # Sprint 2: Use consolidated filename generation
-                            ocr_service = MistralOCRAdapter(settings, shared_client)
-                            filename_generator = FilenameGenerator(settings, shared_client)
-                            output_manager = OutputManager(output_dir, save_at_input_location=True)
+            # Progress tracking for concurrent operations
+            with ProgressManager(verbose=verbose) as progress:
+                if verbose:
+                    progress.start_task(f"Processing {len(files)} files concurrently", total=len(files))
 
-                            filename_metadata, markdown_content, pages_processed = await _generate_filename_for_file(
-                                file_path,
-                                ocr_service,
-                                filename_generator,
-                                output_manager,
-                                force_ocr,
-                                force_filename,
-                                confidence_threshold,
-                                include_page_headlines,
-                                page_pattern,
-                                verbose=False  # No verbose output in concurrent mode
-                            )
+                async def process_file_with_semaphore(file_path: Path):
+                    async with semaphore:
+                        try:
+                            if rename or dry_run:
+                                # Sprint 2: Use consolidated filename generation
+                                ocr_service = MistralOCRAdapter(settings, shared_client)
+                                filename_generator = FilenameGenerator(settings, shared_client)
+                                output_manager = OutputManager(output_dir, save_at_input_location=True)
 
-                            # Check if file was skipped (already correctly named)
-                            if pages_processed == 0:
-                                console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
-                                return (file_path, "skipped", filename_metadata)
-
-                            # Save OCR result BEFORE printing (Ctrl-C resilience)
-                            if markdown_content:
-                                await asyncio.to_thread(
-                                    output_manager.save_text_result,
-                                    markdown_content,
-                                    file_path.stem,
+                                filename_metadata, markdown_content, pages_processed = await _generate_filename_for_file(
                                     file_path,
+                                    ocr_service,
+                                    filename_generator,
+                                    output_manager,
+                                    force_ocr,
+                                    force_filename,
+                                    confidence_threshold,
                                     include_page_headlines,
-                                    filename_metadata,
-                                    pages_processed
+                                    page_pattern,
+                                    verbose=False  # No verbose output in concurrent mode
                                 )
 
-                            # Print simple output - show current -> new filename
-                            new_name = filename_generator.generate_filename_with_extension(
-                                filename_metadata.generated_filename, file_path
-                            )
-                            console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
+                                # Check if file was skipped (already correctly named)
+                                if pages_processed == 0:
+                                    console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
+                                    if verbose:
+                                        progress.update()
+                                    return (file_path, "skipped", filename_metadata)
 
-                            # Warn if below confidence threshold in dry-run
-                            if dry_run and filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
-                                console.print(f"  [red]WARNING: Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})[/red]")
+                                # Save OCR result BEFORE printing (Ctrl-C resilience)
+                                if markdown_content:
+                                    await output_manager.save_text_result(
+                                        markdown_content,
+                                        file_path.stem,
+                                        file_path,
+                                        include_page_headlines,
+                                        filename_metadata,
+                                        pages_processed
+                                    )
 
-                            # Perform rename if not dry-run
-                            if rename and not dry_run:
-                                from .utils.file_renamer import FileRenamer
-                                new_source, new_ocr = FileRenamer.rename_file_pair(
-                                    file_path,
-                                    filename_metadata.generated_filename,
-                                    dry_run=False
+                                # Print simple output - show current -> new filename
+                                new_name = filename_generator.generate_filename_with_extension(
+                                    filename_metadata.generated_filename, file_path
                                 )
-                                console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
+                                console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
 
-                            return (file_path, "success", filename_metadata)
-                        else:
-                            # Non-rename mode
-                            await _process_single_file(
-                                file_path, output_dir, page_pattern, include_page_headlines,
-                                include_image_descriptions, rename, dry_run, confirm, force,
-                                confidence_threshold, verbose
-                            )
-                            return (file_path, "success", None)
-                    except Exception as e:
-                        console.print(f"[ERROR] Error processing {file_path.name}: [red]{e}[/red]")
-                        return (file_path, "error", str(e))
+                                # Warn if below confidence threshold in dry-run
+                                if dry_run and filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                                    console.print(f"  [red]WARNING: Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})[/red]")
 
-            # Run all tasks concurrently
-            results = await asyncio.gather(*[process_file_with_semaphore(f) for f in files])
-            results = list(results)  # Convert to list
+                                # Perform rename if not dry-run
+                                if rename and not dry_run:
+                                    from .utils.file_renamer import FileRenamer
+                                    new_source, new_ocr = FileRenamer.rename_file_pair(
+                                        file_path,
+                                        filename_metadata.generated_filename,
+                                        dry_run=False
+                                    )
+                                    console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
+
+                                if verbose:
+                                    progress.update()
+                                return (file_path, "success", filename_metadata)
+                            else:
+                                # Non-rename mode
+                                await _process_single_file(
+                                    file_path, output_dir, page_pattern, include_page_headlines,
+                                    include_image_descriptions, rename, dry_run, confirm, force,
+                                    confidence_threshold, verbose
+                                )
+                                if verbose:
+                                    progress.update()
+                                return (file_path, "success", None)
+                        except Exception as e:
+                            console.print(f"[ERROR] Error processing {file_path.name}: [red]{e}[/red]")
+                            if verbose:
+                                progress.update()
+                            return (file_path, "error", str(e))
+
+                # Run all tasks concurrently
+                results = await asyncio.gather(*[process_file_with_semaphore(f) for f in files])
+                results = list(results)  # Convert to list
 
         else:
             # Sequential processing without progress bar (non-verbose mode)
@@ -637,8 +650,7 @@ async def _process_multiple_files(
 
                         # Save OCR result BEFORE printing (Ctrl-C resilience)
                         if markdown_content:
-                            await asyncio.to_thread(
-                                batch_output_manager.save_text_result,
+                            await batch_output_manager.save_text_result(
                                 markdown_content,
                                 file_path.stem,
                                 file_path,
@@ -771,7 +783,7 @@ async def _process_concat_files(
                 markdown, api_images = await ocr_service.process_file(file_path, page_pattern, False)
 
                 # Save individual OCR file for caching (in .ocr subdirectory)
-                individual_output_file, saved_images = individual_output_manager.save_text_result(
+                individual_output_file, saved_images = await individual_output_manager.save_text_result(
                     markdown,
                     file_path.stem,
                     file_path,
