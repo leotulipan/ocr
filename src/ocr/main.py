@@ -20,6 +20,7 @@ from .utils.output_manager import OutputManager
 from .services.filename_generator import FilenameGenerator
 from .utils.cache_manager import CacheManager
 from .utils.file_renamer import FileRenamer
+from .utils.error_handler import ErrorHandler
 
 
 app = typer.Typer()
@@ -177,8 +178,9 @@ async def _main(
             )
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        # Sprint 2: Use error handler with proper exit codes
+        exit_code = ErrorHandler.handle_error(e, verbose=verbose)
+        raise typer.Exit(exit_code)
 
 
 def _is_filename_already_correct(file_path: Path, generated_filename: str) -> bool:
@@ -212,6 +214,112 @@ def _get_file_dates(file_path: Path) -> tuple[Optional[str], Optional[str]]:
         return None, None
 
 
+async def _generate_filename_for_file(
+    file_path: Path,
+    ocr_service: MistralOCRAdapter,
+    filename_generator: FilenameGenerator,
+    output_manager: OutputManager,
+    force_ocr: bool,
+    force_filename: bool,
+    confidence_threshold: float,
+    include_page_headlines: bool,
+    page_pattern: Optional[str],
+    verbose: bool,
+) -> tuple[Optional['FilenameMetadata'], Optional[str], int]:
+    """Generate filename for a file with smart caching and confidence checking.
+
+    This is the consolidated filename generation logic used by all processing modes
+    (single file, batch concurrent, batch sequential).
+
+    Args:
+        file_path: Path to the file to process
+        ocr_service: OCR service instance (with shared client)
+        filename_generator: Filename generator instance (with shared client)
+        output_manager: Output manager for saving results
+        force_ocr: Force re-OCR even if cached
+        force_filename: Force regenerate filename even if cached
+        confidence_threshold: Minimum confidence to accept filename (0.0-1.0)
+        include_page_headlines: Include page numbers in markdown
+        page_pattern: Page selection pattern (e.g., "1-3")
+        verbose: Show detailed progress
+
+    Returns:
+        Tuple of (filename_metadata, markdown_content, pages_processed)
+        Returns (None, None, 0) if file is already correctly named
+    """
+    from .models.metadata import FilenameMetadata
+
+    # Extract filesystem dates
+    file_created_date, file_modified_date = _get_file_dates(file_path)
+
+    # Step 1: Check cache
+    cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
+    if cached_filename and not force_filename:
+        if verbose:
+            console.print(f"[green]Using cached filename:[/green] {cached_filename.generated_filename}")
+
+        # Check if file is already correctly named
+        if _is_filename_already_correct(file_path, cached_filename.generated_filename):
+            return None, None, 0  # Signal to skip this file
+
+        return cached_filename, None, 1
+
+    # Step 2: Try to get cached markdown to avoid re-OCR (unless force_ocr is set)
+    markdown_content = CacheManager.get_cached_markdown(file_path) if not force_ocr else None
+    pages_processed = 1
+
+    if not markdown_content:
+        # Step 3: OCR first page only
+        if verbose:
+            console.print("[yellow]Processing first page for analysis...[/yellow]")
+        markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
+        pages_processed = 1
+
+    # Step 4: Generate filename from first page
+    if verbose:
+        console.print("[yellow]Analyzing content for filename generation...[/yellow]")
+    filename_metadata = await filename_generator.analyze_content(
+        markdown_content,
+        pages_analyzed=1,
+        current_filename=file_path.name,
+        file_created_date=file_created_date,
+        file_modified_date=file_modified_date
+    )
+
+    if verbose:
+        console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
+        console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
+
+    # Step 5: Smart OCR caching - only process remaining pages if confidence is low (Sprint 2)
+    if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+        if verbose:
+            console.print(f"[yellow]Low confidence ({filename_metadata.confidence}), processing remaining pages...[/yellow]")
+
+        # Smart caching: Only OCR pages 2-N (not re-OCR page 1)
+        # Override page_pattern to get pages 2 onwards
+        remaining_pages_pattern = "2-"
+        remaining_markdown, _ = await ocr_service.process_file(file_path, remaining_pages_pattern, include_page_headlines)
+
+        # Concatenate first page + remaining pages
+        full_markdown = markdown_content + "\n\n" + remaining_markdown
+
+        # Re-analyze with full document
+        filename_metadata = await filename_generator.analyze_content(
+            full_markdown,
+            pages_analyzed=-1,
+            current_filename=file_path.name,
+            file_created_date=file_created_date,
+            file_modified_date=file_modified_date
+        )
+        if verbose:
+            console.print(f"[green]Updated filename:[/green] {filename_metadata.generated_filename}")
+            console.print(f"[cyan]Updated confidence:[/cyan] {filename_metadata.confidence}")
+        markdown_content = full_markdown
+        pages_processed = -1  # Indicates all pages
+
+    return filename_metadata, markdown_content, pages_processed
+
+
 async def _process_single_file(
     file_path: Path,
     output_dir: Optional[Path],
@@ -240,7 +348,7 @@ async def _process_single_file(
         markdown_content = None
         pages_processed = 1  # Default to single page
 
-        # Filename generation workflow
+        # Filename generation workflow (Sprint 2: Consolidated logic)
         if rename or dry_run:
             if verbose:
                 console.print(f"[yellow]Filename generation mode enabled[/yellow]")
@@ -248,67 +356,27 @@ async def _process_single_file(
             # Initialize filename generator with shared client
             filename_generator = FilenameGenerator(settings, shared_client)
 
-            # Extract filesystem dates
-            file_created_date, file_modified_date = _get_file_dates(file_path)
+            # Use consolidated filename generation function
+            filename_metadata, markdown_content, pages_processed = await _generate_filename_for_file(
+                file_path,
+                ocr_service,
+                filename_generator,
+                output_manager,
+                force_ocr,
+                force_filename,
+                confidence_threshold,
+                include_page_headlines,
+                page_pattern,
+                verbose
+            )
 
-            # Step 1: Check cache
-            cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
-            if cached_filename and not force_filename:
+            # Check if file was skipped (already correctly named)
+            if pages_processed == 0:
                 if verbose:
-                    console.print(f"[green]Using cached filename:[/green] {cached_filename.generated_filename}")
-                filename_metadata = cached_filename
-
-                # Check if file is already correctly named
-                if _is_filename_already_correct(file_path, filename_metadata.generated_filename):
-                    if verbose:
-                        console.print(f"[green][OK] Already correctly named:[/green] {file_path.name}")
-                    else:
-                        console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
-                    return
-            else:
-                # Step 2: Try to get cached markdown to avoid re-OCR (unless force_ocr is set)
-                markdown_content = CacheManager.get_cached_markdown(file_path) if not force_ocr else None if not force_ocr else None
-
-                if not markdown_content:
-                    # Step 3: OCR first page only
-                    if verbose:
-                        console.print("[yellow]Processing first page for analysis...[/yellow]")
-                    markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
-                    pages_processed = 1
-
-                # Step 4: Generate filename
-                if verbose:
-                    console.print("[yellow]Analyzing content for filename generation...[/yellow]")
-                filename_metadata = await filename_generator.analyze_content(
-                    markdown_content,
-                    pages_analyzed=1,
-                    current_filename=file_path.name,
-                    file_created_date=file_created_date,
-                    file_modified_date=file_modified_date
-                )
-
-                if verbose:
-                    console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
-                    console.print(f"[cyan]Confidence:[/cyan] {filename_metadata.confidence}")
-
-                # Step 5: Check if first page analysis was sufficient
-                # Use confidence_threshold for determining if full document processing is needed
-                if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
-                    if verbose:
-                        console.print(f"[yellow]Low confidence ({filename_metadata.confidence}), processing all pages...[/yellow]")
-                    full_markdown, _ = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
-                    filename_metadata = await filename_generator.analyze_content(
-                        full_markdown,
-                        pages_analyzed=-1,
-                        current_filename=file_path.name,
-                        file_created_date=file_created_date,
-                        file_modified_date=file_modified_date
-                    )
-                    if verbose:
-                        console.print(f"[green]Updated filename:[/green] {filename_metadata.generated_filename}")
-                        console.print(f"[cyan]Updated confidence:[/cyan] {filename_metadata.confidence}")
-                    markdown_content = full_markdown
-                    pages_processed = -1  # Indicates all pages
+                    console.print(f"[green][OK] Already correctly named:[/green] {file_path.name}")
+                else:
+                    console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
+                return
 
             # Step 6: Save markdown even for dry-run
             if markdown_content:
@@ -464,55 +532,32 @@ async def _process_multiple_files(
             async def process_file_with_semaphore(file_path: Path):
                 async with semaphore:
                     try:
-                        # Capture filename metadata for simple output
-                        filename_generator = FilenameGenerator(settings, shared_client) if (rename or dry_run) else None
-
                         if rename or dry_run:
-                            # Extract filesystem dates
-                            file_created_date, file_modified_date = _get_file_dates(file_path)
+                            # Sprint 2: Use consolidated filename generation
+                            ocr_service = MistralOCRAdapter(settings, shared_client)
+                            filename_generator = FilenameGenerator(settings, shared_client)
+                            output_manager = OutputManager(output_dir, save_at_input_location=True)
 
-                            # Quick filename generation
-                            cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
-                            if cached_filename and not force_filename:
-                                filename_metadata = cached_filename
+                            filename_metadata, markdown_content, pages_processed = await _generate_filename_for_file(
+                                file_path,
+                                ocr_service,
+                                filename_generator,
+                                output_manager,
+                                force_ocr,
+                                force_filename,
+                                confidence_threshold,
+                                include_page_headlines,
+                                page_pattern,
+                                verbose=False  # No verbose output in concurrent mode
+                            )
 
-                                # Check if file is already correctly named
-                                if _is_filename_already_correct(file_path, filename_metadata.generated_filename):
-                                    console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
-                                    return (file_path, "skipped", filename_metadata)
-                            else:
-                                markdown_content = CacheManager.get_cached_markdown(file_path) if not force_ocr else None
-                                if not markdown_content:
-                                    ocr_service = MistralOCRAdapter(settings, shared_client)
-                                    markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
-                                    pages_processed = 1
-                                else:
-                                    pages_processed = 1  # Cached content
+                            # Check if file was skipped (already correctly named)
+                            if pages_processed == 0:
+                                console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
+                                return (file_path, "skipped", filename_metadata)
 
-                                filename_metadata = await filename_generator.analyze_content(
-                                    markdown_content,
-                                    pages_analyzed=1,
-                                    current_filename=file_path.name,
-                                    file_created_date=file_created_date,
-                                    file_modified_date=file_modified_date
-                                )
-
-                                # Check confidence and process all pages if needed
-                                if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
-                                    ocr_service = MistralOCRAdapter(settings, shared_client)
-                                    full_markdown, _ = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
-                                    filename_metadata = await filename_generator.analyze_content(
-                                        full_markdown,
-                                        pages_analyzed=-1,
-                                        current_filename=file_path.name,
-                                        file_created_date=file_created_date,
-                                        file_modified_date=file_modified_date
-                                    )
-                                    markdown_content = full_markdown
-                                    pages_processed = -1  # All pages
-
-                                # Save OCR result BEFORE printing (Ctrl-C resilience)
-                                output_manager = OutputManager(output_dir, save_at_input_location=True)
+                            # Save OCR result BEFORE printing (Ctrl-C resilience)
+                            if markdown_content:
                                 await asyncio.to_thread(
                                     output_manager.save_text_result,
                                     markdown_content,
@@ -565,55 +610,33 @@ async def _process_multiple_files(
             for file_path in files:
                 try:
                     # Capture filename metadata for simple output
-                    filename_generator = FilenameGenerator(settings, shared_client) if (rename or dry_run) else None
-
                     if rename or dry_run:
-                        # Extract filesystem dates
-                        file_created_date, file_modified_date = _get_file_dates(file_path)
+                        # Sprint 2: Use consolidated filename generation
+                        ocr_service = MistralOCRAdapter(settings, shared_client)
+                        filename_generator = FilenameGenerator(settings, shared_client)
+                        batch_output_manager = OutputManager(output_dir, save_at_input_location=True)
 
-                        # Quick filename generation
-                        cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
-                        if cached_filename and not force_filename:
-                            filename_metadata = cached_filename
+                        filename_metadata, markdown_content, pages_processed = await _generate_filename_for_file(
+                            file_path,
+                            ocr_service,
+                            filename_generator,
+                            batch_output_manager,
+                            force_ocr,
+                            force_filename,
+                            confidence_threshold,
+                            include_page_headlines,
+                            page_pattern,
+                            verbose=False  # Simple output in sequential mode
+                        )
 
-                            # Check if file is already correctly named
-                            if _is_filename_already_correct(file_path, filename_metadata.generated_filename):
-                                console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
-                                results.append((file_path, "skipped", filename_metadata))
-                                continue
-                        else:
-                            markdown_content = CacheManager.get_cached_markdown(file_path) if not force_ocr else None
-                            if not markdown_content:
-                                ocr_service = MistralOCRAdapter(settings)
-                                markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
-                                pages_processed = 1
-                            else:
-                                pages_processed = 1  # Cached content
+                        # Check if file was skipped (already correctly named)
+                        if pages_processed == 0:
+                            console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
+                            results.append((file_path, "skipped", None))
+                            continue
 
-                            filename_metadata = await filename_generator.analyze_content(
-                                markdown_content,
-                                pages_analyzed=1,
-                                current_filename=file_path.name,
-                                file_created_date=file_created_date,
-                                file_modified_date=file_modified_date
-                            )
-
-                            # Check confidence and process all pages if needed
-                            if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
-                                ocr_service = MistralOCRAdapter(settings)
-                                full_markdown, _ = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
-                                filename_metadata = await filename_generator.analyze_content(
-                                    full_markdown,
-                                    pages_analyzed=-1,
-                                    current_filename=file_path.name,
-                                    file_created_date=file_created_date,
-                                    file_modified_date=file_modified_date
-                                )
-                                markdown_content = full_markdown
-                                pages_processed = -1  # All pages
-
-                            # Save OCR result BEFORE printing (Ctrl-C resilience)
-                            batch_output_manager = OutputManager(output_dir, save_at_input_location=True)
+                        # Save OCR result BEFORE printing (Ctrl-C resilience)
+                        if markdown_content:
                             await asyncio.to_thread(
                                 batch_output_manager.save_text_result,
                                 markdown_content,
