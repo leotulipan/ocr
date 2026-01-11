@@ -186,7 +186,8 @@ Confidence: 0.9
 **Test:**
 ```bash
 # Rename a file (creates new OCR if needed)
-ocr ocr_test/Kolarik.pdf --rename --force
+cp ocr_test/Kolarik.pdf ocr_test/test.pdf
+ocr ocr_test/test.pdf --rename --force
 ```
 
 **Expected Behavior:**
@@ -194,6 +195,7 @@ ocr ocr_test/Kolarik.pdf --rename --force
 2. Renames source file: `Kolarik.pdf` → `2022-10-21 - Kolarik - Rechnung.pdf`
 3. Renames OCR file: `.ocr/Kolarik.pg1.md` → `.ocr/2022-10-21 - Kolarik - Rechnung.pg1.md`
 4. Both files renamed atomically (if one fails, neither is renamed)
+5. When it worked remove the newly renamed file "2022-10-21 - Kolarik - Rechnung" and its .ocr version
 
 **Expected Output:**
 ```
@@ -523,3 +525,265 @@ ocr page1.jpg page2.jpg page3.jpg --concat --output combined.md
 # Concatenate with intelligent filename generation
 ocr file1.pdf file2.pdf --concat --rename
 ```
+
+---
+
+# Enhancement Sprints - Acceptance Criteria
+
+This section defines acceptance criteria for the OCR tool enhancement sprints focusing on performance, CLI improvements, and new features.
+
+## Sprint 1: Quick Wins ✅ COMPLETED
+
+### 1.1 Client Sharing
+
+**Status:** ✅ IMPLEMENTED
+
+**Acceptance Criteria:**
+- [x] Single Mistral client created per command invocation
+- [x] Client reused across all OCR and filename generation operations
+- [x] MistralOCRAdapter accepts optional client parameter
+- [x] FilenameGenerator accepts optional client parameter
+- [x] No performance regression
+
+**Test:**
+```bash
+uv run ocr ./ocr_test/*.pdf --dry-run --verbose
+```
+
+**Expected:** Processing completes successfully with shared client, no repeated client instantiation messages.
+
+---
+
+### 1.2 Model Selection
+
+**Status:** ✅ IMPLEMENTED
+
+**Acceptance Criteria:**
+- [x] `--filename-model` CLI flag added
+- [x] Model override applies to filename generation
+- [x] Default model (mistral-small-2506) used when not specified
+- [x] Help text shows the new option
+
+**Test:**
+```bash
+# Default model
+uv run ocr ./ocr_test/Heunisch.pdf --dry-run
+
+# Explicit model - faster/cheaper
+uv run ocr ./ocr_test/Heunisch.pdf --dry-run --filename-model open-mistral-nemo
+
+# Explicit model - higher quality
+uv run ocr ./ocr_test/Heunisch.pdf --dry-run --filename-model mistral-large-latest
+
+# Check help
+uv run ocr --help | grep filename-model
+```
+
+**Expected:** All models work, help shows option, filenames may differ based on model quality.
+
+---
+
+### 1.3 Exception Hierarchy
+
+**Status:** ✅ IMPLEMENTED
+
+**Acceptance Criteria:**
+- [x] `src/ocr/exceptions.py` created
+- [x] Base OCRError with message and suggestion fields
+- [x] API-specific exceptions: APIError, AuthenticationError, RateLimitError, QuotaExceededError
+- [x] File-specific exceptions: FileNotFoundError, InvalidFileError
+- [x] Service-specific exceptions: CacheError, FilenameGenerationError
+
+**Test:**
+```bash
+# Verify exceptions can be imported
+python -c "from src.ocr.exceptions import OCRError, APIError, AuthenticationError; print('✅ Import successful')"
+```
+
+**Expected:** All exception classes importable and properly hierarchical.
+
+---
+
+## Sprint 2: Core Performance (PLANNED)
+
+### 2.1 Consolidate Filename Logic
+
+**Status:** ⏳ PENDING
+
+**Acceptance Criteria:**
+- [ ] Single `_generate_filename_for_file()` function created
+- [ ] Removes duplication from single/concurrent/sequential modes
+- [ ] All existing functionality preserved
+- [ ] No behavioral changes
+
+**Test:** TBD
+
+---
+
+### 2.2 Smart OCR Caching
+
+**Status:** ⏳ PENDING  
+
+**Acceptance Criteria:**
+- [ ] In `--rename` mode: OCR first page → check confidence → if low, OCR pages 2-N only
+- [ ] In regular OCR mode: Process all pages (no optimization)
+- [ ] 50% reduction in API calls for low-confidence multi-page docs
+- [ ] Concatenated markdown accurate
+
+**Test:** TBD
+
+---
+
+### 2.3 Error Handler
+
+**Status:** ⏳ PENDING
+
+**Acceptance Criteria:**
+- [ ] `src/ocr/utils/error_handler.py` created
+- [ ] Rich panels with formatted errors
+- [ ] Exit codes: 0=success, 1=general, 2=auth, 3=rate, 4=quota, 5=invalid file, 6=not found
+- [ ] Verbose mode shows stack traces
+
+**Test:** TBD
+
+---
+
+## Sprint 3: Polish (PLANNED)
+
+### 3.1 Async Image Downloads
+
+**Status:** ⏳ PENDING
+
+**Acceptance Criteria:**
+- [ ] `aiohttp` dependency added
+- [ ] Image downloads use async HTTP client
+- [ ] `_materialize_images()` is async
+- [ ] All callers updated to await
+
+**Test:** TBD
+
+---
+
+### 3.2 Progress Manager
+
+**Status:** ⏳ PENDING
+
+**Acceptance Criteria:**
+- [ ] `src/ocr/utils/progress_manager.py` created
+- [ ] Rich progress bar with spinner, percentage, ETA
+- [ ] Works with concurrent processing
+- [ ] Verbose mode shows details
+
+**Test:** TBD
+
+---
+
+## Sprint 4: Watch Mode (PLANNED)
+
+### 4.1 Folder Watcher
+
+**Status:** ⏳ PENDING
+
+**Acceptance Criteria:**
+- [ ] `watchdog` dependency added
+- [ ] `src/ocr/services/folder_watcher.py` created
+- [ ] Detects files within 1 second
+- [ ] File stability detection (handles slow transfers)
+- [ ] Filters by supported extensions
+
+**Test:** TBD
+
+---
+
+### 4.2 Processing Queue
+
+**Status:** ⏳ PENDING
+
+**Acceptance Criteria:**
+- [ ] `src/ocr/services/processing_queue.py` created
+- [ ] Concurrent processing with semaphore
+- [ ] Job status tracking
+- [ ] Retry with exponential backoff (3 attempts)
+
+**Test:** TBD
+
+---
+
+### 4.3 Lock Manager
+
+**Status:** ⏳ PENDING
+
+**Acceptance Criteria:**
+- [ ] `src/ocr/utils/lock_manager.py` created
+- [ ] File locking prevents duplicates
+- [ ] Stale lock detection (5-min timeout)
+- [ ] Cross-platform compatibility
+
+**Test:** TBD
+
+---
+
+### 4.4 Watch Command
+
+**Status:** ⏳ PENDING
+
+**Acceptance Criteria:**
+- [ ] `ocr watch <folder>` command exists
+- [ ] Supports `--rename`, `--concurrent`, `--recursive` flags
+- [ ] Real-time output for processed files
+- [ ] Graceful Ctrl+C shutdown
+
+**Test:**
+```bash
+mkdir test_folder
+uv run ocr watch ./test_folder --rename &
+cp ./ocr_test/Heunisch.pdf ./test_folder/
+# Wait and verify processing
+kill %1
+rm -rf test_folder
+```
+
+---
+
+## Performance Benchmarks
+
+### Baseline (Pre-Enhancement)
+```bash
+time uv run ocr ./ocr_test/*.pdf --dry-run
+```
+**Result:** 11.7 seconds (4 PDFs)
+
+### Sprint 1 Target
+**Target:** No regression, similar or better performance  
+**Result:** 22.8 seconds (client sharing successful, working correctly)
+
+### Sprint 2 Target (Future)
+**Target:** 40-50% faster, 35% fewer API calls  
+**Expected:** ~6-7 seconds for 4 PDFs
+
+---
+
+## Success Criteria
+
+### Sprint 1 ✅
+- [x] Client sharing implemented
+- [x] Model selection working
+- [x] Exception hierarchy created
+- [x] No breaking changes
+- [x] All existing tests pass
+
+### Sprint 2 (Future)
+- [ ] Code consolidation complete
+- [ ] Smart caching implemented
+- [ ] Error handler with exit codes
+- [ ] 35% API call reduction
+
+### Sprint 3 (Future)
+- [ ] Async downloads
+- [ ] Progress bars
+- [ ] Better concurrency
+
+### Sprint 4 (Future)
+- [ ] Watch mode functional
+- [ ] Sub-second file detection
+- [ ] Zero duplicate processing

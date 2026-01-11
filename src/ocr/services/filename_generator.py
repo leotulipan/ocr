@@ -35,6 +35,12 @@ EXTRACTION GUIDELINES:
     - Only use very old dates (>10 years) if no other date is available
     - Prefer recent dates (within last 10 years) as they're more likely to be document dates
     - Look for date labels: "Befunddatum", "Probenentnahme", "Untersuchungsdatum", "Datum der Untersuchung"
+  - **FILESYSTEM DATE FALLBACK:**
+    - If NO date is found in the document or filename, use the file created date as fallback
+    - If ONLY a DOB (>10 years old) is found and it doesn't make sense for the document type (e.g., medical reports should use report date not patient DOB), use the file created date or modified date instead
+    - Filesystem dates are provided as "File created" and "File modified" in ISO format
+    - Prefer file created date over modified date (modified date may be from file copying/moving)
+    - Use filesystem dates as last resort when no better date is available
 - **Summary**: Look for H2 headings (##) like "## RECHNUNG" or keywords indicating document type. Also check current filename for keywords like "Meldezettel", "Rechnung", "Invoice". Use business-appropriate terms.
 
 CURRENT FILENAME HINTS:
@@ -102,9 +108,14 @@ Return ONLY valid JSON (no markdown code blocks):
   "confidence": 0.5
 }"""
 
-    def __init__(self, settings: Settings):
-        """Initialize filename generator."""
-        self.client = Mistral(api_key=settings.mistral_api_key.get_secret_value())
+    def __init__(self, settings: Settings, client: Optional[Mistral] = None):
+        """Initialize filename generator.
+
+        Args:
+            settings: Application settings
+            client: Optional pre-initialized Mistral client for sharing with OCR adapter
+        """
+        self.client = client or Mistral(api_key=settings.mistral_api_key.get_secret_value())
         self.settings = settings
 
     def _extract_json_from_response(self, text: str) -> dict:
@@ -123,7 +134,9 @@ Return ONLY valid JSON (no markdown code blocks):
         self,
         markdown_content: str,
         pages_analyzed: int = 1,
-        current_filename: Optional[str] = None
+        current_filename: Optional[str] = None,
+        file_created_date: Optional[str] = None,
+        file_modified_date: Optional[str] = None
     ) -> FilenameMetadata:
         """Analyze markdown content and extract filename components.
 
@@ -131,12 +144,20 @@ Return ONLY valid JSON (no markdown code blocks):
             markdown_content: The OCR'd markdown content to analyze
             pages_analyzed: Number of pages analyzed (1 for first page, -1 for all)
             current_filename: Optional current filename to use as additional context
+            file_created_date: Optional file creation date from filesystem (ISO format)
+            file_modified_date: Optional file modification date from filesystem (ISO format)
         """
         try:
-            # Build user message with optional current filename
+            # Build user message with optional current filename and file dates
             user_message = "Analyze this document content and generate filename:"
             if current_filename:
                 user_message += f"\n\nCurrent filename: {current_filename}"
+            if file_created_date or file_modified_date:
+                user_message += "\n\nFilesystem dates:"
+                if file_created_date:
+                    user_message += f"\n  - File created: {file_created_date}"
+                if file_modified_date:
+                    user_message += f"\n  - File modified: {file_modified_date}"
             user_message += f"\n\nDocument content:\n{markdown_content[:4000]}"
 
             # Call Mistral chat completion API

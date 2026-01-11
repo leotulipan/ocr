@@ -78,6 +78,7 @@ def main(
     force_ocr: bool = typer.Option(False, "--force-ocr", help="Force re-OCR even if cached OCR exists"),
     force_filename: bool = typer.Option(False, "--force-filename", help="Force regenerate filename even if cached"),
     confidence: float = typer.Option(0.7, "--confidence", help="Minimum confidence threshold for accepting generated filenames (0.0-1.0, default: 0.7)"),
+    filename_model: Optional[str] = typer.Option(None, "--filename-model", help="Model for filename generation (e.g., mistral-small-2506, mistral-large-latest, open-mistral-nemo). Default: mistral-small-2506"),
     verbose: bool = typer.Option(False, "--verbose", help="Show detailed processing information"),
     concurrent: int = typer.Option(3, "--concurrent", help="Number of files to process concurrently (default: 3, max: 10)"),
     version: bool = typer.Option(None, "--version", "-v", callback=version_callback, is_eager=True, help="Show version and exit"),
@@ -105,7 +106,7 @@ def main(
         force_ocr = True
         force_filename = True
 
-    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, concat, rename, dry_run, confirm, force_ocr, force_filename, confidence, verbose, concurrent))
+    asyncio.run(_main(paths, output, pages, page_headlines, image_descriptions, concat, rename, dry_run, confirm, force_ocr, force_filename, confidence, filename_model, verbose, concurrent))
 
 
 async def _main(
@@ -121,11 +122,22 @@ async def _main(
     force_ocr: bool,
     force_filename: bool,
     confidence_threshold: float,
+    filename_model: Optional[str],
     verbose: bool,
     concurrent: int,
 ):
     """Main processing logic."""
     try:
+        # Load settings and create shared Mistral client (Sprint 1: Client Sharing)
+        settings = Settings()
+        settings.include_image_descriptions = include_image_descriptions
+
+        # Override filename generation model if provided (Sprint 1: Model Selection)
+        if filename_model:
+            settings.filename_generation_model = filename_model
+        from mistralai import Mistral
+        shared_client = Mistral(api_key=settings.mistral_api_key.get_secret_value())
+
         # Expand paths to file list
         files = expand_paths(paths)
 
@@ -142,7 +154,8 @@ async def _main(
                 console.print("[yellow]Warning:[/yellow] --dry-run is ignored in --concat mode")
             await _process_concat_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent
+                include_image_descriptions, rename, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent,
+                settings, shared_client
             )
             return
 
@@ -153,12 +166,14 @@ async def _main(
         if is_single_file:
             await _process_single_file(
                 files[0], output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose
+                include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose,
+                settings, shared_client
             )
         else:
             await _process_multiple_files(
                 files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent
+                include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent,
+                settings, shared_client
             )
 
     except Exception as e:
@@ -170,6 +185,31 @@ def _is_filename_already_correct(file_path: Path, generated_filename: str) -> bo
     """Check if current filename already matches the generated filename."""
     current_name = file_path.stem  # Filename without extension
     return current_name == generated_filename
+
+
+def _get_file_dates(file_path: Path) -> tuple[Optional[str], Optional[str]]:
+    """Extract file creation and modification dates from filesystem.
+
+    Returns:
+        Tuple of (created_date, modified_date) in ISO format (YYYY-MM-DD)
+    """
+    try:
+        # Get file stats
+        stat = file_path.stat()
+
+        # Get creation time (st_ctime on Windows is creation time, on Unix it's metadata change time)
+        # Use st_birthtime if available (macOS), otherwise use st_ctime
+        created_timestamp = getattr(stat, 'st_birthtime', stat.st_ctime)
+        created_date = datetime.fromtimestamp(created_timestamp).strftime('%Y-%m-%d')
+
+        # Get modification time
+        modified_timestamp = stat.st_mtime
+        modified_date = datetime.fromtimestamp(modified_timestamp).strftime('%Y-%m-%d')
+
+        return created_date, modified_date
+    except Exception as e:
+        # If we can't get dates, return None
+        return None, None
 
 
 async def _process_single_file(
@@ -185,15 +225,13 @@ async def _process_single_file(
     force_filename: bool,
     confidence_threshold: float,
     verbose: bool,
+    settings: Settings,
+    shared_client,
 ):
     """Process a single file with optional filename generation."""
     try:
-        # Load settings
-        settings = Settings()
-        settings.include_image_descriptions = include_image_descriptions
-
-        # Initialize OCR service
-        ocr_service = MistralOCRAdapter(settings)
+        # Initialize OCR service with shared client
+        ocr_service = MistralOCRAdapter(settings, shared_client)
         # Default: save at input location unless output_dir is provided
         save_at_input_location = output_dir is None
         output_manager = OutputManager(output_dir, save_at_input_location)
@@ -207,8 +245,11 @@ async def _process_single_file(
             if verbose:
                 console.print(f"[yellow]Filename generation mode enabled[/yellow]")
 
-            # Initialize filename generator
-            filename_generator = FilenameGenerator(settings)
+            # Initialize filename generator with shared client
+            filename_generator = FilenameGenerator(settings, shared_client)
+
+            # Extract filesystem dates
+            file_created_date, file_modified_date = _get_file_dates(file_path)
 
             # Step 1: Check cache
             cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
@@ -241,7 +282,9 @@ async def _process_single_file(
                 filename_metadata = await filename_generator.analyze_content(
                     markdown_content,
                     pages_analyzed=1,
-                    current_filename=file_path.name
+                    current_filename=file_path.name,
+                    file_created_date=file_created_date,
+                    file_modified_date=file_modified_date
                 )
 
                 if verbose:
@@ -257,7 +300,9 @@ async def _process_single_file(
                     filename_metadata = await filename_generator.analyze_content(
                         full_markdown,
                         pages_analyzed=-1,
-                        current_filename=file_path.name
+                        current_filename=file_path.name,
+                        file_created_date=file_created_date,
+                        file_modified_date=file_modified_date
                     )
                     if verbose:
                         console.print(f"[green]Updated filename:[/green] {filename_metadata.generated_filename}")
@@ -364,12 +409,11 @@ async def _process_multiple_files(
     confidence_threshold: float,
     verbose: bool,
     concurrent: int,
+    settings: Settings,
+    shared_client,
 ):
     """Process multiple files with optional batch rename and concurrent processing."""
     try:
-        # Load settings
-        settings = Settings()
-        settings.include_image_descriptions = include_image_descriptions
 
         # For batch: default to project ocr_output unless user provided --output
         save_at_input_location = False
@@ -421,9 +465,12 @@ async def _process_multiple_files(
                 async with semaphore:
                     try:
                         # Capture filename metadata for simple output
-                        filename_generator = FilenameGenerator(settings) if (rename or dry_run) else None
+                        filename_generator = FilenameGenerator(settings, shared_client) if (rename or dry_run) else None
 
                         if rename or dry_run:
+                            # Extract filesystem dates
+                            file_created_date, file_modified_date = _get_file_dates(file_path)
+
                             # Quick filename generation
                             cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
                             if cached_filename and not force_filename:
@@ -436,7 +483,7 @@ async def _process_multiple_files(
                             else:
                                 markdown_content = CacheManager.get_cached_markdown(file_path) if not force_ocr else None
                                 if not markdown_content:
-                                    ocr_service = MistralOCRAdapter(settings)
+                                    ocr_service = MistralOCRAdapter(settings, shared_client)
                                     markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
                                     pages_processed = 1
                                 else:
@@ -445,17 +492,21 @@ async def _process_multiple_files(
                                 filename_metadata = await filename_generator.analyze_content(
                                     markdown_content,
                                     pages_analyzed=1,
-                                    current_filename=file_path.name
+                                    current_filename=file_path.name,
+                                    file_created_date=file_created_date,
+                                    file_modified_date=file_modified_date
                                 )
 
                                 # Check confidence and process all pages if needed
                                 if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
-                                    ocr_service = MistralOCRAdapter(settings)
+                                    ocr_service = MistralOCRAdapter(settings, shared_client)
                                     full_markdown, _ = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
                                     filename_metadata = await filename_generator.analyze_content(
                                         full_markdown,
                                         pages_analyzed=-1,
-                                        current_filename=file_path.name
+                                        current_filename=file_path.name,
+                                        file_created_date=file_created_date,
+                                        file_modified_date=file_modified_date
                                     )
                                     markdown_content = full_markdown
                                     pages_processed = -1  # All pages
@@ -514,9 +565,12 @@ async def _process_multiple_files(
             for file_path in files:
                 try:
                     # Capture filename metadata for simple output
-                    filename_generator = FilenameGenerator(settings) if (rename or dry_run) else None
+                    filename_generator = FilenameGenerator(settings, shared_client) if (rename or dry_run) else None
 
                     if rename or dry_run:
+                        # Extract filesystem dates
+                        file_created_date, file_modified_date = _get_file_dates(file_path)
+
                         # Quick filename generation
                         cached_filename = CacheManager.get_cached_filename(file_path, force=force_filename)
                         if cached_filename and not force_filename:
@@ -539,7 +593,9 @@ async def _process_multiple_files(
                             filename_metadata = await filename_generator.analyze_content(
                                 markdown_content,
                                 pages_analyzed=1,
-                                current_filename=file_path.name
+                                current_filename=file_path.name,
+                                file_created_date=file_created_date,
+                                file_modified_date=file_modified_date
                             )
 
                             # Check confidence and process all pages if needed
@@ -549,7 +605,9 @@ async def _process_multiple_files(
                                 filename_metadata = await filename_generator.analyze_content(
                                     full_markdown,
                                     pages_analyzed=-1,
-                                    current_filename=file_path.name
+                                    current_filename=file_path.name,
+                                    file_created_date=file_created_date,
+                                    file_modified_date=file_modified_date
                                 )
                                 markdown_content = full_markdown
                                 pages_processed = -1  # All pages
@@ -651,15 +709,13 @@ async def _process_concat_files(
     confidence_threshold: float,
     verbose: bool,
     concurrent: int,
+    settings: Settings,
+    shared_client,
 ):
     """Process multiple files and concatenate into one output document."""
     try:
-        # Load settings
-        settings = Settings()
-        settings.include_image_descriptions = include_image_descriptions
-
-        # Initialize OCR service
-        ocr_service = MistralOCRAdapter(settings)
+        # Initialize OCR service with shared client
+        ocr_service = MistralOCRAdapter(settings, shared_client)
 
         console.print(f"[yellow]Concatenation mode:[/yellow] Processing {len(files)} files as pages of one document...")
         if page_pattern:
@@ -751,12 +807,16 @@ async def _process_concat_files(
         if rename:
             if verbose:
                 console.print(f"\n[yellow]Generating intelligent filename for concatenated document...[/yellow]")
-            filename_generator = FilenameGenerator(settings)
+            filename_generator = FilenameGenerator(settings, shared_client)
+            # Extract filesystem dates from first file
+            file_created_date, file_modified_date = _get_file_dates(files[0])
             # Use first file's name as current_filename for context
             filename_metadata = await filename_generator.analyze_content(
                 combined_markdown,
                 pages_analyzed=len(files),
-                current_filename=files[0].name
+                current_filename=files[0].name,
+                file_created_date=file_created_date,
+                file_modified_date=file_modified_date
             )
             if verbose:
                 console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")

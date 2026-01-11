@@ -20,10 +20,15 @@ class ImageDescription(BaseModel):
 
 class MistralOCRAdapter(OCRService):
     """Mistral AI OCR service adapter."""
-    
-    def __init__(self, settings: Settings):
-        """Initialize the Mistral OCR adapter."""
-        self.client = Mistral(api_key=settings.mistral_api_key.get_secret_value())
+
+    def __init__(self, settings: Settings, client: Optional[Mistral] = None):
+        """Initialize the Mistral OCR adapter.
+
+        Args:
+            settings: Application settings
+            client: Optional pre-initialized Mistral client for sharing across instances
+        """
+        self.client = client or Mistral(api_key=settings.mistral_api_key.get_secret_value())
         self.settings = settings
     
     def _validate_image_file(self, file_path: Path) -> bool:

@@ -41,12 +41,13 @@
 [x] Save OCR results immediately before stdout output for Ctrl-C resilience - ensures interrupted batch operations don't lose completed work
 [x] Add --force-ocr and --force-filename flags for granular control - allows regenerating just OCR or just filename independently, --force remains as shorthand for both
 [x] Enhance prompt to clean garbled filenames from previous OCR - detects corrupted characters, mojibake, special ASCII artifacts and matches against high-quality Mistral OCR content to reconstruct intended meaning
+[x] Add file modified/created date from filesystem to the prompt (together with the original filename we already use). If no other date (or only a DOB) is found in the OCR and it doesnt make sense to use the date of birth for that filename, the created date should be the new default.
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## In Progress Tasks
-------------------------------------------------------------------------------------------------------------------------------- 
+-------------------------------------------------------------------------------------------------------------------------------
 
-[ ] add file modified/created date from filesystem to the prompt if no other date (or only a DOB) is found in the file and it doesnt make sense to use the date of birth for that filename
+None
 
 -------------------------------------------------------------------------------------------------------------------------------
 ## Future Tasks
