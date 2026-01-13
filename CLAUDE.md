@@ -42,52 +42,68 @@ MISTRAL_API_KEY=your_mistral_api_key_here
 ### Basic OCR Processing
 ```bash
 # Process a single file
-uv run ocr document.pdf
+uv run ocr run document.pdf
 # or when installed globally
-ocr document.pdf
+ocr run document.pdf
 
 # Process multiple files
-ocr file1.pdf file2.pdf file3.pdf
+ocr run file1.pdf file2.pdf file3.pdf
 
 # Process entire folder
-ocr ./invoices/
+ocr run ./invoices/
 
 # Process with page selection
-ocr document.pdf --pages "1-3"
-ocr document.pdf --pages "5-"
+ocr run document.pdf --pages "1-3"
+ocr run document.pdf --pages "5-"
 
 # Show version
 ocr --version
 
 # CLI help
 ocr --help
+ocr run --help
 ```
 
 ### Intelligent Filename Generation
 ```bash
 # Generate and apply intelligent filename
-ocr invoice.pdf --rename
+ocr run invoice.pdf --rename
 
 # Preview suggested filename (dry-run with simple output)
-ocr invoice.pdf --dry-run
+ocr run invoice.pdf --dry-run
 
 # Preview with verbose output (shows all processing steps)
-ocr invoice.pdf --dry-run --verbose
+ocr run invoice.pdf --dry-run --verbose
 
 # Set custom confidence threshold (default: 0.7)
-ocr invoice.pdf --rename --confidence 0.8
+ocr run invoice.pdf --rename --confidence 0.8
 
 # Rename with confirmation prompt
-ocr invoice.pdf --rename --confirm
+ocr run invoice.pdf --rename --confirm
 
 # Force regenerate filename (ignore cache)
-ocr invoice.pdf --rename --force
+ocr run invoice.pdf --rename --force
 
 # Batch rename all files in folder (simple output)
-ocr ./invoices/ --rename --dry-run
+ocr run ./invoices/ --rename --dry-run
 
 # Batch rename with verbose output
-ocr ./invoices/ --rename --dry-run --verbose
+ocr run ./invoices/ --rename --dry-run --verbose
+```
+
+### Watch Mode (Auto-Process New Files)
+```bash
+# Watch Downloads folder and auto-rename new files
+ocr watch ~/Downloads --rename
+
+# Watch with concurrent processing
+ocr watch ./invoices --rename --concurrent 5
+
+# Watch subdirectories recursively
+ocr watch ./documents --recursive --rename
+
+# Watch without renaming (just OCR)
+ocr watch ./scans
 ```
 
 
