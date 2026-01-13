@@ -27,7 +27,7 @@ from .services.folder_watcher import FolderWatcher
 from .services.processing_queue import ProcessingQueue
 
 
-app = typer.Typer()
+app = typer.Typer(no_args_is_help=True)
 console = Console()
 
 # Supported file extensions
@@ -39,6 +39,14 @@ def version_callback(value: bool):
     if value:
         console.print(f"OCR version: [cyan]{__version__}[/cyan]")
         raise typer.Exit()
+
+
+@app.callback()
+def callback(
+    version: bool = typer.Option(None, "--version", "-v", callback=version_callback, is_eager=True, help="Show version and exit"),
+):
+    """OCR CLI - Process documents with Mistral AI OCR."""
+    pass
 
 
 def expand_paths(paths: List[Path]) -> List[Path]:
@@ -68,7 +76,7 @@ def expand_paths(paths: List[Path]) -> List[Path]:
     return files
 
 
-@app.command()
+@app.command("run")
 def main(
     paths: List[Path] = typer.Argument(..., help="Files or folders to process"),
     output: Optional[Path] = typer.Option(None, "-o", "--output", help="Output directory (default: save next to source for single file, ocr_output for multiple)"),
@@ -86,17 +94,16 @@ def main(
     filename_model: Optional[str] = typer.Option(None, "--filename-model", help="Model for filename generation (e.g., mistral-small-2506, mistral-large-latest, open-mistral-nemo). Default: mistral-small-2506"),
     verbose: bool = typer.Option(False, "--verbose", help="Show detailed processing information"),
     concurrent: int = typer.Option(3, "--concurrent", help="Number of files to process concurrently (default: 3, max: 10)"),
-    version: bool = typer.Option(None, "--version", "-v", callback=version_callback, is_eager=True, help="Show version and exit"),
 ):
-    """OCR CLI - Process documents with Mistral AI.
+    """Process documents with OCR.
 
     Examples:
-        ocr document.pdf
-        ocr invoice1.pdf invoice2.pdf
-        ocr ./invoices/
-        ocr *.pdf --rename
-        ocr magazine.pdf --image-descriptions
-        ocr page1.jpg page2.jpg page3.jpg --concat --output combined.md
+        ocr run document.pdf
+        ocr run invoice1.pdf invoice2.pdf
+        ocr run ./invoices/
+        ocr run *.pdf --rename
+        ocr run magazine.pdf --image-descriptions
+        ocr run page1.jpg page2.jpg page3.jpg --concat --output combined.md
     """
     # Validate concurrent parameter
     if concurrent < 1:
