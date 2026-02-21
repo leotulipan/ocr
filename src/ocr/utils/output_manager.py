@@ -225,7 +225,8 @@ class OutputManager:
     async def save_text_result(self, content: str, filename: str, source_file: Path = None,
                         include_page_headlines: bool = False,
                         filename_metadata: Optional[FilenameMetadata] = None,
-                        pages_processed: int = 1) -> tuple[Path, int]:
+                        pages_processed: int = 1,
+                        copy_to_source_dir: bool = False) -> tuple[Path, int]:
         """Save OCR text result to file and materialize image references (base64 and URLs)."""
         # Determine output location - always save in .ocr subdirectory
         if self.save_at_input_location and source_file:
@@ -275,6 +276,13 @@ class OutputManager:
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(header)
             f.write(updated_content)
+
+        # Copy to source directory if requested
+        if copy_to_source_dir and self.save_at_input_location and source_file:
+            import shutil
+            copy_file = source_file.parent / output_file.name
+            shutil.copy2(output_file, copy_file)
+            print(f"Copied to source directory: {copy_file.name}")
 
         return output_file, img_count
 

@@ -168,8 +168,12 @@ class MistralOCRAdapter(OCRService):
         return images_map, total_images
 
     def _generate_markdown(self, response: OCRResponse, page_pattern: Optional[str] = None,
-                          include_page_headlines: bool = False) -> tuple[str, int]:
-        """Generate markdown from OCR response with optional filtering and headlines."""
+                          include_page_headlines: bool = False) -> tuple[str, int, int]:
+        """Generate markdown from OCR response with optional filtering and headlines.
+
+        Returns:
+            Tuple of (markdown_content, total_images, pages_processed)
+        """
         if not page_pattern:
             # Process all pages
             pages_to_process = list(range(len(response.pages)))
@@ -180,7 +184,7 @@ class MistralOCRAdapter(OCRService):
             pages_to_process = [i for i in range(len(response.pages)) if i + 1 in selected_pages]
 
         if not pages_to_process:
-            return "No pages match the specified pattern.", 0
+            return "No pages match the specified pattern.", 0, 0
 
         markdown_parts = []
         for i in pages_to_process:
@@ -220,32 +224,38 @@ class MistralOCRAdapter(OCRService):
                 markdown_parts.append(page_content)
 
         markdown_body = "\n\n".join(markdown_parts)
+        pages_count = len(pages_to_process)
+
         # Prepend images map as an HTML comment block for OutputManager to consume
         images_map, total_images = self._collect_images_map(response, pages_to_process)
         if images_map:
             header = f"<!--IMAGES_MAP\n{json.dumps(images_map)}\n-->\n\n"
-            return header + markdown_body, total_images
-        return markdown_body, total_images
+            return header + markdown_body, total_images, pages_count
+        return markdown_body, total_images, pages_count
     
-    async def process_file(self, file_path: Path, page_pattern: Optional[str] = None, 
-                          include_page_headlines: bool = False) -> tuple[str, int]:
-        """Process a single file and return extracted text."""
+    async def process_file(self, file_path: Path, page_pattern: Optional[str] = None,
+                          include_page_headlines: bool = False) -> tuple[str, int, int]:
+        """Process a single file and return extracted text.
+
+        Returns:
+            Tuple of (markdown_content, total_images, pages_processed)
+        """
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
-        
+
         # Validate page pattern if provided
         if page_pattern and not PagePatternParser.validate_pattern(page_pattern):
             raise ValueError(f"Invalid page pattern: {page_pattern}")
-        
+
         # Encode file to base64
         base64_content = self._encode_file(file_path)
         document_type = self._get_document_type(file_path)
         url_field = self._get_url_field_name(file_path)
         mime_type = self._get_mime_type(file_path)
-        
+
         # Create data URL with base64 content
         data_url = f"data:{mime_type};base64,{base64_content}"
-        
+
         # Process with Mistral OCR
         document_dict = {"type": document_type}
         document_dict[url_field] = data_url
@@ -261,21 +271,31 @@ class MistralOCRAdapter(OCRService):
             ocr_kwargs["bbox_annotation_format"] = response_format_from_pydantic_model(ImageDescription)
 
         response: OCRResponse = self.client.ocr.process(**ocr_kwargs)
-        
+
         # Generate markdown with optional filtering and headlines
-        markdown, total_images = self._generate_markdown(response, page_pattern, include_page_headlines)
-        
-        return markdown, total_images
+        markdown, total_images, pages_count = self._generate_markdown(response, page_pattern, include_page_headlines)
+
+        return markdown, total_images, pages_count
 
     async def process_first_page(self, file_path: Path,
                                  include_page_headlines: bool = False) -> tuple[str, int]:
-        """Process only first page for filename generation analysis."""
-        return await self.process_file(file_path, page_pattern="1",
-                                      include_page_headlines=include_page_headlines)
+        """Process only first page for filename generation analysis.
+
+        Returns:
+            Tuple of (markdown_content, total_images)
+            Note: pages_processed is always 1 for this method, so not returned
+        """
+        markdown, total_images, _ = await self.process_file(file_path, page_pattern="1",
+                                                             include_page_headlines=include_page_headlines)
+        return markdown, total_images
 
     async def process_files(self, file_paths: List[Path], page_pattern: Optional[str] = None,
-                           include_page_headlines: bool = False) -> List[tuple[str, int]]:
-        """Process multiple files and return extracted text for each."""
+                           include_page_headlines: bool = False) -> List[tuple[str, int, int]]:
+        """Process multiple files and return extracted text for each.
+
+        Returns:
+            List of tuples (markdown_content, total_images, pages_processed)
+        """
         results = []
         for file_path in file_paths:
             try:
@@ -284,25 +304,29 @@ class MistralOCRAdapter(OCRService):
             except Exception as e:
                 # Log error but continue with other files
                 print(f"Error processing {file_path}: {e}")
-                results.append((f"Error processing {file_path}: {e}", 0))
+                results.append((f"Error processing {file_path}: {e}", 0, 0))
         return results
     
     async def process_folder(self, folder_path: Path, page_pattern: Optional[str] = None,
-                            include_page_headlines: bool = False) -> List[tuple[str, int]]:
-        """Process all supported files in a folder and return extracted text."""
+                            include_page_headlines: bool = False) -> List[tuple[str, int, int]]:
+        """Process all supported files in a folder and return extracted text.
+
+        Returns:
+            List of tuples (markdown_content, total_images, pages_processed)
+        """
         if not folder_path.exists():
             raise FileNotFoundError(f"Folder not found: {folder_path}")
-        
+
         if not folder_path.is_dir():
             raise ValueError(f"Path is not a directory: {folder_path}")
-        
+
         # Supported file extensions
         supported_extensions = {'.pdf', '.png', '.jpg', '.jpeg', '.avif', '.pptx', '.docx'}
-        
+
         # Find all supported files
         files = [
-            f for f in folder_path.iterdir() 
+            f for f in folder_path.iterdir()
             if f.is_file() and f.suffix.lower() in supported_extensions
         ]
-        
+
         return await self.process_files(files, page_pattern, include_page_headlines)

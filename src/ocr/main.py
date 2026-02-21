@@ -81,7 +81,7 @@ def main(
     paths: List[Path] = typer.Argument(..., help="Files or folders to process"),
     output: Optional[Path] = typer.Option(None, "-o", "--output", help="Output directory (default: save next to source for single file, ocr_output for multiple)"),
     pages: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')"),
-    page_headlines: bool = typer.Option(False, "--page-headlines", help="Include page numbers as markdown headlines"),
+    page_headlines: bool = typer.Option(True, "--page-headlines/--no-page-headlines", help="Include page numbers as markdown headlines (default: enabled)"),
     image_descriptions: bool = typer.Option(True, "--image-descriptions/--no-image-descriptions", help="Include AI-generated descriptions for embedded images (default: enabled)"),
     concat: bool = typer.Option(False, "--concat", help="Concatenate multiple files into one output document (treats each file as a page)"),
     rename: bool = typer.Option(False, "--rename", help="Enable intelligent filename generation and renaming"),
@@ -188,6 +188,9 @@ async def _main(
                 settings, shared_client
             )
 
+    except typer.Exit:
+        # Re-raise typer.Exit as-is (it's an intentional exit)
+        raise
     except Exception as e:
         # Sprint 2: Use error handler with proper exit codes
         exit_code = ErrorHandler.handle_error(e, verbose=verbose)
@@ -309,7 +312,7 @@ async def _generate_filename_for_file(
         # Smart caching: Only OCR pages 2-N (not re-OCR page 1)
         # Override page_pattern to get pages 2 onwards
         remaining_pages_pattern = "2-"
-        remaining_markdown, _ = await ocr_service.process_file(file_path, remaining_pages_pattern, include_page_headlines)
+        remaining_markdown, _, _ = await ocr_service.process_file(file_path, remaining_pages_pattern, include_page_headlines)
 
         # Concatenate first page + remaining pages
         full_markdown = markdown_content + "\n\n" + remaining_markdown
@@ -397,7 +400,8 @@ async def _process_single_file(
                     file_path,
                     include_page_headlines,
                     filename_metadata=filename_metadata,
-                    pages_processed=pages_processed
+                    pages_processed=pages_processed,
+                    copy_to_source_dir=False  # Don't copy in rename/dry-run workflow
                 )
                 if verbose:
                     console.print(f"[OK] Saved OCR result to: [blue]{output_file}[/blue]")
@@ -435,12 +439,10 @@ async def _process_single_file(
             console.print(f"Processing file: [green]{file_path}[/green]")
             if page_pattern:
                 console.print(f"Page pattern: [yellow]{page_pattern}[/yellow]")
-                # Determine pages processed from pattern (simplified - just check if it's "1")
-                pages_processed = 1 if page_pattern == "1" else -1
             if include_page_headlines:
                 console.print("Including page headlines: [yellow]enabled[/yellow]")
 
-            result, api_images = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
+            result, api_images, pages_processed = await ocr_service.process_file(file_path, page_pattern, include_page_headlines)
         else:
             result = markdown_content
             api_images = 0  # Already counted from cache
@@ -453,7 +455,8 @@ async def _process_single_file(
                 file_path,
                 include_page_headlines,
                 filename_metadata=filename_metadata,
-                pages_processed=pages_processed
+                pages_processed=pages_processed,
+                copy_to_source_dir=not rename  # Copy to source dir when not renaming
             )
             console.print(f"[OK] Saved result to: [blue]{output_file}[/blue]")
             console.print(f"[INFO] API returned {api_images} images, saved {saved_images} images")
@@ -529,7 +532,7 @@ async def _process_multiple_files(
                     await _process_single_file(
                         file_path, output_dir, page_pattern, include_page_headlines,
                         include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename,
-                        confidence_threshold, verbose
+                        confidence_threshold, verbose, settings, shared_client
                     )
                     results.append((file_path, "success", None))
                 except Exception as e:
@@ -582,7 +585,8 @@ async def _process_multiple_files(
                                         file_path,
                                         include_page_headlines,
                                         filename_metadata,
-                                        pages_processed
+                                        pages_processed,
+                                        copy_to_source_dir=False  # Don't copy in rename/dry-run workflow
                                     )
 
                                 # Print simple output - show current -> new filename
@@ -612,8 +616,8 @@ async def _process_multiple_files(
                                 # Non-rename mode
                                 await _process_single_file(
                                     file_path, output_dir, page_pattern, include_page_headlines,
-                                    include_image_descriptions, rename, dry_run, confirm, force,
-                                    confidence_threshold, verbose
+                                    include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename,
+                                    confidence_threshold, verbose, settings, shared_client
                                 )
                                 if verbose:
                                     progress.update()
@@ -666,7 +670,8 @@ async def _process_multiple_files(
                                 file_path,
                                 include_page_headlines,
                                 filename_metadata,
-                                pages_processed
+                                pages_processed,
+                                copy_to_source_dir=False  # Don't copy in rename/dry-run workflow
                             )
 
                         # Handle confirmation for this file
@@ -702,8 +707,8 @@ async def _process_multiple_files(
                         # Non-rename mode
                         await _process_single_file(
                             file_path, output_dir, page_pattern, include_page_headlines,
-                            include_image_descriptions, rename, dry_run, confirm, force,
-                            confidence_threshold, verbose
+                            include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename,
+                            confidence_threshold, verbose, settings, shared_client
                         )
                         results.append((file_path, "success", None))
                 except Exception as e:
@@ -716,11 +721,15 @@ async def _process_multiple_files(
             table.add_column("File", style="cyan")
             table.add_column("Status", style="green")
 
-            for file_path, status, _ in results:
+            for file_path, status, metadata in results:
                 if status == "success":
                     status_text = "[OK] Success"
                 elif status == "skipped":
                     status_text = "[OK] Already correct"
+                elif status == "error":
+                    # Show actual error message if available
+                    error_msg = str(metadata)[:50] if metadata else "unknown error"
+                    status_text = f"[ERROR] {error_msg}"
                 else:
                     status_text = f"[ERROR] {status}"
                 table.add_row(file_path.name, status_text)
@@ -790,7 +799,7 @@ async def _process_concat_files(
                 console.print(f"\n[cyan]Processing page {idx}:[/cyan] {file_path.name}")
 
                 # Process file
-                markdown, api_images = await ocr_service.process_file(file_path, page_pattern, False)
+                markdown, api_images, _ = await ocr_service.process_file(file_path, page_pattern, False)
 
                 # Save individual OCR file for caching (in .ocr subdirectory)
                 individual_output_file, saved_images = await individual_output_manager.save_text_result(
@@ -799,7 +808,8 @@ async def _process_concat_files(
                     file_path,
                     include_page_headlines=False,  # No page headlines in individual files
                     filename_metadata=None,
-                    pages_processed=1  # Each file treated as single page for caching
+                    pages_processed=1,  # Each file treated as single page for caching
+                    copy_to_source_dir=False  # Don't copy in concat mode
                 )
                 total_images_saved += saved_images
 
@@ -1007,14 +1017,15 @@ def watch(
                     console.print(f"[green][OK] Renamed to: {new_source.name}[/green] (Confidence: {filename_metadata.confidence})")
                 else:
                     # Process without renaming
-                    markdown, api_images = await ocr_service.process_file(file_path, None, False)
+                    markdown, api_images, pages_count = await ocr_service.process_file(file_path, None, False)
                     output_file, saved_images = await output_manager.save_text_result(
                         markdown,
                         file_path.stem,
                         file_path,
                         include_page_headlines=False,
                         filename_metadata=None,
-                        pages_processed=1
+                        pages_processed=pages_count,
+                        copy_to_source_dir=True  # Copy to source dir in watch mode without rename
                     )
                     console.print(f"[green][OK] Processed: {file_path.name}[/green]")
 
@@ -1065,6 +1076,9 @@ def watch(
     except KeyboardInterrupt:
         console.print("\n[yellow]Watch mode stopped[/yellow]")
         raise typer.Exit(0)
+    except typer.Exit:
+        # Re-raise typer.Exit as-is (it's an intentional exit)
+        raise
     except Exception as e:
         exit_code = ErrorHandler.handle_error(e, verbose=verbose)
         raise typer.Exit(exit_code)

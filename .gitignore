@@ -163,4 +163,10 @@ cython_debug/
 .cursor/
 # Token files
 tokens/*
-ocr_output/*
+ocr_test/.ocr/*
+ocr_test/*Meldezettel*
+ocr_test/*.md
+
+# Windows
+desktop.ini
+tmpclaude-*
