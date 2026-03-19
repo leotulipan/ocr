@@ -1,8 +1,8 @@
 """Metadata models for OCR processing."""
 
 from datetime import datetime
-from pathlib import Path
-from typing import Optional, Any, Dict
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -12,10 +12,10 @@ class FilenameMetadata(BaseModel):
     generated_filename: str
     generation_timestamp: datetime
     generation_method: str = Field(default="mistral-small-2506")
-    confidence: Optional[float] = None  # 0.0 (low) to 1.0 (high), e.g., 0.5 for medium
-    extracted_date: Optional[str] = None
-    extracted_company: Optional[str] = None
-    extracted_summary: Optional[str] = None
+    confidence: float | None = None  # 0.0 (low) to 1.0 (high), e.g., 0.5 for medium
+    extracted_date: str | None = None
+    extracted_company: str | None = None
+    extracted_summary: str | None = None
     pages_analyzed: int = 1
 
 
@@ -25,19 +25,19 @@ class RenameEvent(BaseModel):
     from_name: str
     to_name: str
     timestamp: datetime
-    confidence: Optional[float] = None
+    confidence: float | None = None
 
 
 class OCRMetadata(BaseModel):
     """Complete metadata for OCR output files."""
 
-    source_file: Optional[str] = None
-    original_filename: Optional[str] = None  # Original filename before any renaming
+    source_file: str | None = None
+    original_filename: str | None = None  # Original filename before any renaming
     processed_at: datetime
     content_length: int
     include_page_headlines: bool = False
     images_saved: int = 0
-    filename_metadata: Optional[FilenameMetadata] = None
+    filename_metadata: FilenameMetadata | None = None
     rename_history: list[RenameEvent] = Field(default_factory=list)
 
     @classmethod
@@ -53,12 +53,14 @@ class OCRMetadata(BaseModel):
         # Parse rename_history if present
         rename_history = []
         for entry in data.get("rename_history", []):
-            rename_history.append(RenameEvent(
-                from_name=entry["from_name"],
-                to_name=entry["to_name"],
-                timestamp=datetime.fromisoformat(entry["timestamp"]),
-                confidence=entry.get("confidence"),
-            ))
+            rename_history.append(
+                RenameEvent(
+                    from_name=entry["from_name"],
+                    to_name=entry["to_name"],
+                    timestamp=datetime.fromisoformat(entry["timestamp"]),
+                    confidence=entry.get("confidence"),
+                )
+            )
 
         return cls(
             source_file=data.get("source_file"),
@@ -71,7 +73,7 @@ class OCRMetadata(BaseModel):
             rename_history=rename_history,
         )
 
-    def to_yaml_dict(self) -> Dict[str, Any]:
+    def to_yaml_dict(self) -> dict[str, Any]:
         """Convert to dictionary for YAML serialization."""
         result = {
             "source_file": self.source_file,

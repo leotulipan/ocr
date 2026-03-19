@@ -1,27 +1,28 @@
 """Mistral AI adapter for OCR processing."""
 
 import base64
+import json
 from pathlib import Path
-from typing import List, Optional, Set
+
 from mistralai import Mistral, OCRResponse
 from mistralai.extra import response_format_from_pydantic_model
 from pydantic import BaseModel, Field
-import json
 
-from ..protocols.ocr_service import OCRService
 from ..models.settings import Settings
+from ..protocols.ocr_service import OCRService
 from ..utils.page_parser import PagePatternParser
 
 
 class ImageDescription(BaseModel):
     """Model for image descriptions from bbox annotations."""
+
     description: str = Field(..., description="Detailed description of what is visible in the image")
 
 
 class MistralOCRAdapter(OCRService):
     """Mistral AI OCR service adapter."""
 
-    def __init__(self, settings: Settings, client: Optional[Mistral] = None):
+    def __init__(self, settings: Settings, client: Mistral | None = None):
         """Initialize the Mistral OCR adapter.
 
         Args:
@@ -30,54 +31,54 @@ class MistralOCRAdapter(OCRService):
         """
         self.client = client or Mistral(api_key=settings.mistral_api_key.get_secret_value())
         self.settings = settings
-    
+
     def _validate_image_file(self, file_path: Path) -> bool:
         """Validate that the file is a valid image file."""
         try:
             with open(file_path, "rb") as file:
                 header = file.read(10)  # Read first 10 bytes
-                
+
             ext = file_path.suffix.lower()
-            if ext in ['.jpg', '.jpeg']:
+            if ext in [".jpg", ".jpeg"]:
                 # Check for JPEG header: FF D8 FF
-                return header.startswith(b'\xff\xd8\xff')
-            elif ext == '.png':
+                return header.startswith(b"\xff\xd8\xff")
+            elif ext == ".png":
                 # Check for PNG header: 89 50 4E 47 0D 0A 1A 0A
-                return header.startswith(b'\x89PNG\r\n\x1a\n')
-            elif ext == '.avif':
+                return header.startswith(b"\x89PNG\r\n\x1a\n")
+            elif ext == ".avif":
                 # Check for AVIF header: 00 00 00 20 66 74 79 70 61 76 69 66
-                return header.startswith(b'\x00\x00\x00 ftypavif')
+                return header.startswith(b"\x00\x00\x00 ftypavif")
             else:
                 # For other formats, assume valid
                 return True
         except Exception:
             return False
-    
+
     def _encode_file(self, file_path: Path) -> str:
         """Encode file to base64."""
         try:
             # Validate image files before encoding
-            if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.avif']:
+            if file_path.suffix.lower() in [".jpg", ".jpeg", ".png", ".avif"]:
                 if not self._validate_image_file(file_path):
                     raise ValueError(f"Invalid or corrupted image file: {file_path}")
-            
+
             with open(file_path, "rb") as file:
-                return base64.b64encode(file.read()).decode('utf-8')
+                return base64.b64encode(file.read()).decode("utf-8")
         except FileNotFoundError:
-            raise FileNotFoundError(f"File not found: {file_path}")
+            raise FileNotFoundError(f"File not found: {file_path}") from None
         except Exception as e:
-            raise Exception(f"Error encoding file {file_path}: {e}")
-    
+            raise Exception(f"Error encoding file {file_path}: {e}") from e
+
     def _get_document_type(self, file_path: Path) -> str:
         """Determine document type based on file extension."""
         ext = file_path.suffix.lower()
-        if ext in ['.pdf', '.pptx', '.docx']:
+        if ext in [".pdf", ".pptx", ".docx"]:
             return "document_url"
-        elif ext in ['.png', '.jpg', '.jpeg', '.avif']:
+        elif ext in [".png", ".jpg", ".jpeg", ".avif"]:
             return "image_url"
         else:
             raise ValueError(f"Unsupported file type: {ext}")
-    
+
     def _get_url_field_name(self, file_path: Path) -> str:
         """Get the correct URL field name based on document type."""
         doc_type = self._get_document_type(file_path)
@@ -87,35 +88,31 @@ class MistralOCRAdapter(OCRService):
             return "image_url"
         else:
             raise ValueError(f"Unsupported document type: {doc_type}")
-    
+
     def _get_mime_type(self, file_path: Path) -> str:
         """Get MIME type based on file extension."""
         ext = file_path.suffix.lower()
         mime_types = {
-            '.pdf': 'application/pdf',
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.avif': 'image/avif',
-            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            ".pdf": "application/pdf",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".avif": "image/avif",
+            ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         }
-        return mime_types.get(ext, 'application/octet-stream')
-    
-    def _filter_pages_by_pattern(self, response: OCRResponse, page_pattern: Optional[str] = None) -> OCRResponse:
+        return mime_types.get(ext, "application/octet-stream")
+
+    def _filter_pages_by_pattern(self, response: OCRResponse, page_pattern: str | None = None) -> OCRResponse:
         """Filter OCR response pages based on pattern."""
         if not page_pattern:
             return response
-        
-        # Parse the page pattern
-        total_pages = len(response.pages)
-        selected_pages = PagePatternParser.parse_pattern(page_pattern, total_pages)
-        
-        # Create a new response with only selected pages
-        # Note: We can't modify the original response, so we'll return the filtered pages
-        # The actual filtering will be done in the markdown generation
+
+        # Parse the page pattern (actual filtering done in _generate_markdown)
+        # Just validate the pattern is parseable here
+        _ = PagePatternParser.parse_pattern(page_pattern, len(response.pages))
         return response
-    
+
     def _collect_images_map(self, response: OCRResponse, pages_to_process: list[int]) -> tuple[dict, int]:
         """Collect a mapping of image filename -> {mime, base64} from the OCR response pages."""
         images_map = {}
@@ -131,12 +128,12 @@ class MistralOCRAdapter(OCRService):
                 b64 = getattr(img, "image_base64", None) or getattr(img, "base64", None)
                 mime = getattr(img, "mime", None) or getattr(img, "content_type", None)
                 # Extract base64 data from data URL if present
-                if b64 and b64.startswith('data:'):
-                    if ';base64,' in b64:
-                        b64 = b64.split(';base64,', 1)[1]
+                if b64 and b64.startswith("data:"):
+                    if ";base64," in b64:
+                        b64 = b64.split(";base64,", 1)[1]
                     else:
                         continue
-                
+
                 if not b64:
                     continue
                 # Generate filename if not present
@@ -167,8 +164,7 @@ class MistralOCRAdapter(OCRService):
                 images_map[filename] = {"mime": mime, "base64": b64}
         return images_map, total_images
 
-    def _generate_markdown(self, response: OCRResponse, page_pattern: Optional[str] = None,
-                          include_page_headlines: bool = False) -> tuple[str, int, int]:
+    def _generate_markdown(self, response: OCRResponse, page_pattern: str | None = None, include_page_headlines: bool = False) -> tuple[str, int, int]:
         """Generate markdown from OCR response with optional filtering and headlines.
 
         Returns:
@@ -213,10 +209,7 @@ class MistralOCRAdapter(OCRService):
                         # Replace image reference with image + description
                         image_pattern = f"![{img_id}]({img_id})"
                         if image_pattern in page_content:
-                            page_content = page_content.replace(
-                                image_pattern,
-                                f"{image_pattern}\n\n**Image Description:** {description}\n"
-                            )
+                            page_content = page_content.replace(image_pattern, f"{image_pattern}\n\n**Image Description:** {description}\n")
 
             if include_page_headlines:
                 markdown_parts.append(f"### Page {page_num}\n{page_content}")
@@ -232,10 +225,8 @@ class MistralOCRAdapter(OCRService):
             header = f"<!--IMAGES_MAP\n{json.dumps(images_map)}\n-->\n\n"
             return header + markdown_body, total_images, pages_count
         return markdown_body, total_images, pages_count
-    
-    async def process_file(self, file_path: Path, page_pattern: Optional[str] = None,
-                          include_page_headlines: bool = False,
-                          include_images: bool = True) -> tuple[str, int, int]:
+
+    async def process_file(self, file_path: Path, page_pattern: str | None = None, include_page_headlines: bool = False, include_images: bool = True) -> tuple[str, int, int]:
         """Process a single file and return extracted text.
 
         Returns:
@@ -262,11 +253,7 @@ class MistralOCRAdapter(OCRService):
         document_dict[url_field] = data_url
 
         # Add bbox_annotation_format if image descriptions are enabled
-        ocr_kwargs = {
-            "model": "mistral-ocr-latest",
-            "document": document_dict,
-            "include_image_base64": include_images
-        }
+        ocr_kwargs = {"model": "mistral-ocr-latest", "document": document_dict, "include_image_base64": include_images}
 
         if self.settings.include_image_descriptions:
             ocr_kwargs["bbox_annotation_format"] = response_format_from_pydantic_model(ImageDescription)
@@ -278,22 +265,17 @@ class MistralOCRAdapter(OCRService):
 
         return markdown, total_images, pages_count
 
-    async def process_first_page(self, file_path: Path,
-                                 include_page_headlines: bool = False,
-                                 include_images: bool = True) -> tuple[str, int]:
+    async def process_first_page(self, file_path: Path, include_page_headlines: bool = False, include_images: bool = True) -> tuple[str, int]:
         """Process only first page for filename generation analysis.
 
         Returns:
             Tuple of (markdown_content, total_images)
             Note: pages_processed is always 1 for this method, so not returned
         """
-        markdown, total_images, _ = await self.process_file(file_path, page_pattern="1",
-                                                             include_page_headlines=include_page_headlines,
-                                                             include_images=include_images)
+        markdown, total_images, _ = await self.process_file(file_path, page_pattern="1", include_page_headlines=include_page_headlines, include_images=include_images)
         return markdown, total_images
 
-    async def process_files(self, file_paths: List[Path], page_pattern: Optional[str] = None,
-                           include_page_headlines: bool = False) -> List[tuple[str, int, int]]:
+    async def process_files(self, file_paths: list[Path], page_pattern: str | None = None, include_page_headlines: bool = False) -> list[tuple[str, int, int]]:
         """Process multiple files and return extracted text for each.
 
         Returns:
@@ -309,9 +291,8 @@ class MistralOCRAdapter(OCRService):
                 print(f"Error processing {file_path}: {e}")
                 results.append((f"Error processing {file_path}: {e}", 0, 0))
         return results
-    
-    async def process_folder(self, folder_path: Path, page_pattern: Optional[str] = None,
-                            include_page_headlines: bool = False) -> List[tuple[str, int, int]]:
+
+    async def process_folder(self, folder_path: Path, page_pattern: str | None = None, include_page_headlines: bool = False) -> list[tuple[str, int, int]]:
         """Process all supported files in a folder and return extracted text.
 
         Returns:
@@ -324,12 +305,9 @@ class MistralOCRAdapter(OCRService):
             raise ValueError(f"Path is not a directory: {folder_path}")
 
         # Supported file extensions
-        supported_extensions = {'.pdf', '.png', '.jpg', '.jpeg', '.avif', '.pptx', '.docx'}
+        supported_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".avif", ".pptx", ".docx"}
 
         # Find all supported files
-        files = [
-            f for f in folder_path.iterdir()
-            if f.is_file() and f.suffix.lower() in supported_extensions
-        ]
+        files = [f for f in folder_path.iterdir() if f.is_file() and f.suffix.lower() in supported_extensions]
 
         return await self.process_files(files, page_pattern, include_page_headlines)

@@ -2,12 +2,12 @@
 
 import asyncio
 import concurrent.futures
-import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Callable, Awaitable, Optional, Set
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
+
 from rich.console import Console
+from watchdog.events import FileCreatedEvent, FileSystemEventHandler
+from watchdog.observers import Observer
 
 console = Console()
 
@@ -22,14 +22,9 @@ class FolderWatcher:
     - Recursive directory monitoring
     """
 
-    SUPPORTED_EXTENSIONS = {'.pdf', '.pptx', '.docx', '.png', '.jpg', '.jpeg', '.avif'}
+    SUPPORTED_EXTENSIONS = {".pdf", ".pptx", ".docx", ".png", ".jpg", ".jpeg", ".avif"}
 
-    def __init__(
-        self,
-        folder_path: Path,
-        on_file_ready: Callable[[Path], Awaitable[None]],
-        recursive: bool = False
-    ):
+    def __init__(self, folder_path: Path, on_file_ready: Callable[[Path], Awaitable[None]], recursive: bool = False):
         """Initialize folder watcher.
 
         Args:
@@ -42,8 +37,8 @@ class FolderWatcher:
         self.recursive = recursive
         self.observer = Observer()
         self.handler = FileHandler(self, set())
-        self._stability_futures: Set[concurrent.futures.Future] = set()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._stability_futures: set[concurrent.futures.Future] = set()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def mark_processed(self, file_path: Path):
         """Mark a path as processed to prevent re-triggering."""
@@ -104,25 +99,18 @@ class FolderWatcher:
             return
 
         # Schedule coroutine on the main event loop from watchdog's background thread
-        future = asyncio.run_coroutine_threadsafe(
-            self.wait_for_file_stability(file_path),
-            self._loop
-        )
+        future = asyncio.run_coroutine_threadsafe(self.wait_for_file_stability(file_path), self._loop)
         self._stability_futures.add(future)
         future.add_done_callback(self._stability_futures.discard)
 
-    def start(self, loop: Optional[asyncio.AbstractEventLoop] = None):
+    def start(self, loop: asyncio.AbstractEventLoop | None = None):
         """Start watching the folder."""
         self._loop = loop or asyncio.get_event_loop()
 
         if not self.folder_path.exists():
             raise FileNotFoundError(f"Folder not found: {self.folder_path}")
 
-        self.observer.schedule(
-            self.handler,
-            str(self.folder_path),
-            recursive=self.recursive
-        )
+        self.observer.schedule(self.handler, str(self.folder_path), recursive=self.recursive)
         self.observer.start()
         console.print(f"[green]Watching: {self.folder_path}[/green] (recursive: {self.recursive})")
 
@@ -140,7 +128,7 @@ class FolderWatcher:
 class FileHandler(FileSystemEventHandler):
     """Handles file system events from watchdog."""
 
-    def __init__(self, watcher: FolderWatcher, processed_files: Set[Path]):
+    def __init__(self, watcher: FolderWatcher, processed_files: set[Path]):
         """Initialize file handler.
 
         Args:

@@ -2,10 +2,10 @@
 
 import os
 import re
-import yaml
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple, Optional
+
+import yaml
 from rich.console import Console
 from rich.prompt import Confirm
 
@@ -36,11 +36,7 @@ class FileRenamer:
                 raise RuntimeError(f"Could not resolve collision for {target_path}")
 
     @staticmethod
-    def rename_file_pair(
-        source_file: Path,
-        new_basename: str,
-        dry_run: bool = False
-    ) -> Tuple[Optional[Path], Optional[Path]]:
+    def rename_file_pair(source_file: Path, new_basename: str, dry_run: bool = False) -> tuple[Path | None, Path | None]:
         """
         Rename both original file and its OCR markdown file in .ocr subdirectory.
 
@@ -122,9 +118,7 @@ class FileRenamer:
             raise RuntimeError(f"Failed to rename files: {e}") from e
 
     @staticmethod
-    def log_rename_to_frontmatter(
-        ocr_file: Path, from_name: str, to_name: str, confidence: Optional[float] = None
-    ) -> None:
+    def log_rename_to_frontmatter(ocr_file: Path, from_name: str, to_name: str, confidence: float | None = None) -> None:
         """Append a rename event to the YAML frontmatter rename_history."""
         try:
             content = ocr_file.read_text(encoding="utf-8")
@@ -137,22 +131,22 @@ class FileRenamer:
 
         metadata_dict = yaml.safe_load(yaml_match.group(1)) or {}
         history = metadata_dict.get("rename_history", []) or []
-        history.append({
-            "from_name": from_name,
-            "to_name": to_name,
-            "timestamp": datetime.now().isoformat(),
-            "confidence": confidence,
-        })
+        history.append(
+            {
+                "from_name": from_name,
+                "to_name": to_name,
+                "timestamp": datetime.now().isoformat(),
+                "confidence": confidence,
+            }
+        )
         metadata_dict["rename_history"] = history
 
         new_frontmatter = yaml.dump(metadata_dict, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        new_content = f"---\n{new_frontmatter}---\n{content[yaml_match.end():]}"
+        new_content = f"---\n{new_frontmatter}---\n{content[yaml_match.end() :]}"
         ocr_file.write_text(new_content, encoding="utf-8")
 
     @staticmethod
-    def log_rename_to_file(
-        directory: Path, from_name: str, to_name: str, confidence: Optional[float] = None
-    ) -> None:
+    def log_rename_to_file(directory: Path, from_name: str, to_name: str, confidence: float | None = None) -> None:
         """Append a line to .ocr/rename.log in the given directory."""
         ocr_dir = directory / ".ocr"
         ocr_dir.mkdir(parents=True, exist_ok=True)
@@ -169,7 +163,7 @@ class FileRenamer:
     def confirm_rename(source_file: Path, new_name: str) -> bool:
         """Prompt user for rename confirmation."""
         console = Console()
-        console.print(f"\n[yellow]Proposed rename:[/yellow]")
+        console.print("\n[yellow]Proposed rename:[/yellow]")
         console.print(f"  From: [cyan]{source_file.name}[/cyan]")
         console.print(f"  To:   [green]{new_name}{source_file.suffix}[/green]")
 

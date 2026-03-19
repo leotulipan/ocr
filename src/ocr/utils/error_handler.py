@@ -2,16 +2,14 @@
 
 from rich.console import Console
 from rich.panel import Panel
+
 from ..exceptions import (
-    OCRError,
+    AuthenticationError,
     FileNotFoundError,
     InvalidFileError,
-    APIError,
-    AuthenticationError,
-    RateLimitError,
+    OCRError,
     QuotaExceededError,
-    CacheError,
-    FilenameGenerationError,
+    RateLimitError,
 )
 
 console = Console()
@@ -109,9 +107,7 @@ class ErrorHandler:
         suggestion = error.suggestion or "Verify the file is not corrupted and retry"
         console.print(
             Panel(
-                f"[red]Invalid File[/red]\n\n"
-                f"{error.message}\n\n"
-                f"[yellow]Suggestion:[/yellow] {suggestion}",
+                f"[red]Invalid File[/red]\n\n{error.message}\n\n[yellow]Suggestion:[/yellow] {suggestion}",
                 title="❌ File Error",
                 border_style="red",
             )
@@ -132,6 +128,7 @@ class ErrorHandler:
             console.print(f"[yellow]Suggestion:[/yellow] {error.suggestion}")
         if verbose:
             import traceback
+
             console.print("\n[dim]Stack trace:[/dim]")
             console.print(traceback.format_exc())
 
@@ -144,5 +141,6 @@ class ErrorHandler:
 
         if verbose:
             import traceback
+
             console.print("\n[dim]Stack trace:[/dim]")
             console.print(traceback.format_exc())

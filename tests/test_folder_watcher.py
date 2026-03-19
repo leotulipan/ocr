@@ -43,6 +43,7 @@ class TestFileHandler:
 
         # Since it's in processed_files, _handle_new_file should not be called
         from watchdog.events import FileCreatedEvent
+
         event = MagicMock(spec=FileCreatedEvent)
         event.is_directory = False
         event.src_path = str(tmp_path / "test.pdf")

@@ -22,11 +22,13 @@ class OCRError(Exception):
 
 class FileNotFoundError(OCRError):
     """File or folder not found."""
+
     pass
 
 
 class InvalidFileError(OCRError):
     """Invalid or corrupted file."""
+
     pass
 
 
@@ -49,24 +51,29 @@ class APIError(OCRError):
 
 class AuthenticationError(APIError):
     """API authentication failed."""
+
     pass
 
 
 class RateLimitError(APIError):
     """API rate limit exceeded."""
+
     pass
 
 
 class QuotaExceededError(APIError):
     """API quota exceeded."""
+
     pass
 
 
 class CacheError(OCRError):
     """Cache read/write error."""
+
     pass
 
 
 class FilenameGenerationError(OCRError):
     """Filename generation failed."""
+
     pass

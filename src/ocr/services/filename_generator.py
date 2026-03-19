@@ -3,15 +3,15 @@
 import json
 import re
 import sys
-from pathlib import Path
-from typing import Optional
 from datetime import datetime
+from pathlib import Path
+
 from mistralai import Mistral
 
-from ..models.settings import Settings
 from ..models.metadata import FilenameMetadata
+from ..models.settings import Settings
 
-if getattr(sys, 'frozen', False):
+if getattr(sys, "frozen", False):
     _PROMPT_FILE = Path(sys._MEIPASS) / "ocr" / "services" / "filename_generator_prompt.md"
 else:
     _PROMPT_FILE = Path(__file__).parent / "filename_generator_prompt.md"
@@ -22,7 +22,7 @@ class FilenameGenerator:
 
     SYSTEM_PROMPT = _PROMPT_FILE.read_text(encoding="utf-8")
 
-    def __init__(self, settings: Settings, client: Optional[Mistral] = None):
+    def __init__(self, settings: Settings, client: Mistral | None = None):
         """Initialize filename generator.
 
         Args:
@@ -35,8 +35,8 @@ class FilenameGenerator:
     def _extract_json_from_response(self, text: str) -> dict:
         """Extract JSON from response, handling markdown code blocks."""
         # Remove markdown code blocks if present
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*', '', text)
+        text = re.sub(r"```json\s*", "", text)
+        text = re.sub(r"```\s*", "", text)
         text = text.strip()
 
         try:
@@ -44,14 +44,7 @@ class FilenameGenerator:
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in response: {text}") from e
 
-    async def analyze_content(
-        self,
-        markdown_content: str,
-        pages_analyzed: int = 1,
-        current_filename: Optional[str] = None,
-        file_created_date: Optional[str] = None,
-        file_modified_date: Optional[str] = None
-    ) -> FilenameMetadata:
+    async def analyze_content(self, markdown_content: str, pages_analyzed: int = 1, current_filename: str | None = None, file_created_date: str | None = None, file_modified_date: str | None = None) -> FilenameMetadata:
         """Analyze markdown content and extract filename components.
 
         Args:
@@ -77,12 +70,9 @@ class FilenameGenerator:
             # Call Mistral chat completion API
             response = await self.client.chat.complete_async(
                 model=self.settings.filename_generation_model,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message}
-                ],
+                messages=[{"role": "system", "content": self.SYSTEM_PROMPT}, {"role": "user", "content": user_message}],
                 temperature=self.settings.filename_generation_temperature,
-                max_tokens=self.settings.filename_generation_max_tokens
+                max_tokens=self.settings.filename_generation_max_tokens,
             )
 
             # Parse response
@@ -125,27 +115,27 @@ class FilenameGenerator:
                 extracted_date=date,
                 extracted_company=company,
                 extracted_summary=summary,
-                pages_analyzed=pages_analyzed
+                pages_analyzed=pages_analyzed,
             )
 
-        except Exception as e:
+        except Exception:
             # Fallback: use generic name
             return FilenameMetadata(
                 generated_filename="Document",
                 generation_timestamp=datetime.now(),
                 generation_method="fallback",
                 confidence=0.1,  # Low confidence for fallback
-                pages_analyzed=pages_analyzed
+                pages_analyzed=pages_analyzed,
             )
 
     def _sanitize_filename(self, filename: str) -> str:
         """Remove invalid characters from filename."""
         # Windows forbidden characters: < > : " / \ | ? *
         invalid_chars = r'[<>:"/\\|?*]'
-        sanitized = re.sub(invalid_chars, '', filename)
+        sanitized = re.sub(invalid_chars, "", filename)
 
         # Replace multiple spaces with single space
-        sanitized = re.sub(r'\s+', ' ', sanitized)
+        sanitized = re.sub(r"\s+", " ", sanitized)
 
         # Trim whitespace
         sanitized = sanitized.strip()

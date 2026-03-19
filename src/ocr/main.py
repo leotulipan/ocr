@@ -1,43 +1,41 @@
 """Main OCR CLI application."""
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, List
+
 import typer
+import yaml
 from rich.console import Console
 from rich.progress import track
-from rich.table import Table
 from rich.prompt import Confirm
-import re
-import yaml
-from datetime import datetime
+from rich.table import Table
 
 from . import __version__
-from .models.settings import Settings
-from .models.metadata import OCRMetadata
 from .adapters.mistral_adapter import MistralOCRAdapter
-from .utils.output_manager import OutputManager
+from .models.metadata import FilenameMetadata, OCRMetadata
+from .models.settings import Settings
 from .services.filename_generator import FilenameGenerator
-from .utils.cache_manager import CacheManager
-from .utils.file_renamer import FileRenamer
-from .utils.error_handler import ErrorHandler
-from .utils.progress_manager import ProgressManager
-from .utils.lock_manager import FileLock
 from .services.folder_watcher import FolderWatcher
 from .services.processing_queue import ProcessingQueue
-
+from .utils.cache_manager import CacheManager
+from .utils.error_handler import ErrorHandler
+from .utils.file_renamer import FileRenamer
+from .utils.lock_manager import FileLock
+from .utils.output_manager import OutputManager
+from .utils.progress_manager import ProgressManager
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
 
 # Supported file extensions
-SUPPORTED_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.avif', '.pptx', '.docx'}
+SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".avif", ".pptx", ".docx"}
 
 
 def _log_rename(
     file_path: Path,
     new_source: Path,
-    new_ocr: Optional[Path],
+    new_ocr: Path | None,
     filename_metadata,
 ) -> None:
     """Log a rename event to both frontmatter and directory log file."""
@@ -68,7 +66,7 @@ def callback(
     pass
 
 
-def expand_paths(paths: List[Path]) -> List[Path]:
+def expand_paths(paths: list[Path]) -> list[Path]:
     """Expand paths to file list. Folders are expanded to all supported files."""
     files = []
     for path in paths:
@@ -83,10 +81,7 @@ def expand_paths(paths: List[Path]) -> List[Path]:
                 console.print(f"[yellow]Warning:[/yellow] Unsupported file type: {path}")
         elif path.is_dir():
             # Find all supported files in directory
-            dir_files = [
-                f for f in path.iterdir()
-                if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
-            ]
+            dir_files = [f for f in path.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
             if dir_files:
                 files.extend(dir_files)
             else:
@@ -97,9 +92,9 @@ def expand_paths(paths: List[Path]) -> List[Path]:
 
 @app.command("run")
 def main(
-    paths: List[Path] = typer.Argument(..., help="Files or folders to process"),
-    output: Optional[Path] = typer.Option(None, "-o", "--output", help="Output directory (default: save next to source for single file, ocr_output for multiple)"),
-    pages: Optional[str] = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')"),
+    paths: list[Path] = typer.Argument(..., help="Files or folders to process"),
+    output: Path | None = typer.Option(None, "-o", "--output", help="Output directory (default: save next to source for single file, ocr_output for multiple)"),
+    pages: str | None = typer.Option(None, "--pages", help="Page pattern (e.g., '1-3', '5-', '4,5')"),
     page_headlines: bool = typer.Option(True, "--page-headlines/--no-page-headlines", help="Include page numbers as markdown headlines (default: enabled)"),
     image_descriptions: bool = typer.Option(True, "--image-descriptions/--no-image-descriptions", help="Include AI-generated descriptions for embedded images (default: enabled)"),
     concat: bool = typer.Option(False, "--concat", help="Concatenate multiple files into one output document (treats each file as a page)"),
@@ -111,7 +106,7 @@ def main(
     force_ocr: bool = typer.Option(False, "--force-ocr", help="Force re-OCR even if cached OCR exists"),
     force_filename: bool = typer.Option(False, "--force-filename", help="Force regenerate filename even if cached"),
     confidence: float = typer.Option(0.7, "--confidence", help="Minimum confidence threshold for accepting generated filenames (0.0-1.0, default: 0.7)"),
-    filename_model: Optional[str] = typer.Option(None, "--filename-model", help="Model for filename generation (e.g., mistral-small-2506, mistral-large-latest, open-mistral-nemo). Default: mistral-small-2506"),
+    filename_model: str | None = typer.Option(None, "--filename-model", help="Model for filename generation (e.g., mistral-small-2506, mistral-large-latest, open-mistral-nemo). Default: mistral-small-2506"),
     verbose: bool = typer.Option(False, "--verbose", help="Show detailed processing information"),
     concurrent: int = typer.Option(3, "--concurrent", help="Number of files to process concurrently (default: 3, max: 10)"),
 ):
@@ -149,9 +144,9 @@ def main(
 
 
 async def _main(
-    paths: List[Path],
-    output_dir: Optional[Path],
-    page_pattern: Optional[str],
+    paths: list[Path],
+    output_dir: Path | None,
+    page_pattern: str | None,
     include_page_headlines: bool,
     include_image_descriptions: bool,
     concat: bool,
@@ -161,7 +156,7 @@ async def _main(
     force_ocr: bool,
     force_filename: bool,
     confidence_threshold: float,
-    filename_model: Optional[str],
+    filename_model: str | None,
     verbose: bool,
     concurrent: int,
 ):
@@ -175,6 +170,7 @@ async def _main(
         if filename_model:
             settings.filename_generation_model = filename_model
         from mistralai import Mistral
+
         shared_client = Mistral(api_key=settings.mistral_api_key.get_secret_value())
 
         # Expand paths to file list
@@ -192,9 +188,7 @@ async def _main(
             if dry_run:
                 console.print("[yellow]Warning:[/yellow] --dry-run is ignored in --concat mode")
             await _process_concat_files(
-                files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent,
-                settings, shared_client
+                files, output_dir, page_pattern, include_page_headlines, include_image_descriptions, rename, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent, settings, shared_client
             )
             return
 
@@ -204,15 +198,11 @@ async def _main(
         # Process files
         if is_single_file:
             await _process_single_file(
-                files[0], output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose,
-                settings, shared_client
+                files[0], output_dir, page_pattern, include_page_headlines, include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose, settings, shared_client
             )
         else:
             await _process_multiple_files(
-                files, output_dir, page_pattern, include_page_headlines,
-                include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent,
-                settings, shared_client
+                files, output_dir, page_pattern, include_page_headlines, include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose, concurrent, settings, shared_client
             )
 
     except typer.Exit:
@@ -221,7 +211,7 @@ async def _main(
     except Exception as e:
         # Sprint 2: Use error handler with proper exit codes
         exit_code = ErrorHandler.handle_error(e, verbose=verbose)
-        raise typer.Exit(exit_code)
+        raise typer.Exit(exit_code) from e
 
 
 def _is_filename_already_correct(file_path: Path, generated_filename: str) -> bool:
@@ -230,7 +220,7 @@ def _is_filename_already_correct(file_path: Path, generated_filename: str) -> bo
     return current_name == generated_filename
 
 
-def _get_file_dates(file_path: Path) -> tuple[Optional[str], Optional[str]]:
+def _get_file_dates(file_path: Path) -> tuple[str | None, str | None]:
     """Extract file creation and modification dates from filesystem.
 
     Returns:
@@ -242,15 +232,15 @@ def _get_file_dates(file_path: Path) -> tuple[Optional[str], Optional[str]]:
 
         # Get creation time (st_ctime on Windows is creation time, on Unix it's metadata change time)
         # Use st_birthtime if available (macOS), otherwise use st_ctime
-        created_timestamp = getattr(stat, 'st_birthtime', stat.st_ctime)
-        created_date = datetime.fromtimestamp(created_timestamp).strftime('%Y-%m-%d')
+        created_timestamp = getattr(stat, "st_birthtime", stat.st_ctime)
+        created_date = datetime.fromtimestamp(created_timestamp).strftime("%Y-%m-%d")
 
         # Get modification time
         modified_timestamp = stat.st_mtime
-        modified_date = datetime.fromtimestamp(modified_timestamp).strftime('%Y-%m-%d')
+        modified_date = datetime.fromtimestamp(modified_timestamp).strftime("%Y-%m-%d")
 
         return created_date, modified_date
-    except Exception as e:
+    except Exception:
         # If we can't get dates, return None
         return None, None
 
@@ -264,9 +254,9 @@ async def _generate_filename_for_file(
     force_filename: bool,
     confidence_threshold: float,
     include_page_headlines: bool,
-    page_pattern: Optional[str],
+    page_pattern: str | None,
     verbose: bool,
-) -> tuple[Optional['FilenameMetadata'], Optional[str], int]:
+) -> tuple[FilenameMetadata | None, str | None, int]:
     """Generate filename for a file with smart caching and confidence checking.
 
     This is the consolidated filename generation logic used by all processing modes
@@ -288,7 +278,6 @@ async def _generate_filename_for_file(
         Tuple of (filename_metadata, markdown_content, pages_processed)
         Returns (None, None, 0) if file is already correctly named
     """
-    from .models.metadata import FilenameMetadata
 
     # Extract filesystem dates
     file_created_date, file_modified_date = _get_file_dates(file_path)
@@ -319,13 +308,7 @@ async def _generate_filename_for_file(
     # Step 4: Generate filename from first page
     if verbose:
         console.print("[yellow]Analyzing content for filename generation...[/yellow]")
-    filename_metadata = await filename_generator.analyze_content(
-        markdown_content,
-        pages_analyzed=1,
-        current_filename=file_path.name,
-        file_created_date=file_created_date,
-        file_modified_date=file_modified_date
-    )
+    filename_metadata = await filename_generator.analyze_content(markdown_content, pages_analyzed=1, current_filename=file_path.name, file_created_date=file_created_date, file_modified_date=file_modified_date)
 
     if verbose:
         console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
@@ -345,13 +328,7 @@ async def _generate_filename_for_file(
         full_markdown = markdown_content + "\n\n" + remaining_markdown
 
         # Re-analyze with full document
-        filename_metadata = await filename_generator.analyze_content(
-            full_markdown,
-            pages_analyzed=-1,
-            current_filename=file_path.name,
-            file_created_date=file_created_date,
-            file_modified_date=file_modified_date
-        )
+        filename_metadata = await filename_generator.analyze_content(full_markdown, pages_analyzed=-1, current_filename=file_path.name, file_created_date=file_created_date, file_modified_date=file_modified_date)
         if verbose:
             console.print(f"[green]Updated filename:[/green] {filename_metadata.generated_filename}")
             console.print(f"[cyan]Updated confidence:[/cyan] {filename_metadata.confidence}")
@@ -363,8 +340,8 @@ async def _generate_filename_for_file(
 
 async def _process_single_file(
     file_path: Path,
-    output_dir: Optional[Path],
-    page_pattern: Optional[str],
+    output_dir: Path | None,
+    page_pattern: str | None,
     include_page_headlines: bool,
     include_image_descriptions: bool,
     rename: bool,
@@ -392,23 +369,14 @@ async def _process_single_file(
         # Filename generation workflow (Sprint 2: Consolidated logic)
         if rename or dry_run:
             if verbose:
-                console.print(f"[yellow]Filename generation mode enabled[/yellow]")
+                console.print("[yellow]Filename generation mode enabled[/yellow]")
 
             # Initialize filename generator with shared client
             filename_generator = FilenameGenerator(settings, shared_client)
 
             # Use consolidated filename generation function
             filename_metadata, markdown_content, pages_processed = await _generate_filename_for_file(
-                file_path,
-                ocr_service,
-                filename_generator,
-                output_manager,
-                force_ocr,
-                force_filename,
-                confidence_threshold,
-                include_page_headlines,
-                page_pattern,
-                verbose
+                file_path, ocr_service, filename_generator, output_manager, force_ocr, force_filename, confidence_threshold, include_page_headlines, page_pattern, verbose
             )
 
             # Check if file was skipped (already correctly named)
@@ -429,7 +397,7 @@ async def _process_single_file(
                     filename_metadata=filename_metadata,
                     pages_processed=pages_processed,
                     copy_to_source_dir=False,  # Don't copy in rename/dry-run workflow
-                    skip_images=True  # No image extraction needed for rename
+                    skip_images=True,  # No image extraction needed for rename
                 )
                 if verbose:
                     console.print(f"[OK] Saved OCR result to: [blue]{output_file}[/blue]")
@@ -437,10 +405,8 @@ async def _process_single_file(
             # Step 7: Handle dry-run
             if dry_run:
                 if verbose:
-                    console.print(f"\n[yellow]DRY RUN - No files will be renamed[/yellow]")
-                new_name = filename_generator.generate_filename_with_extension(
-                    filename_metadata.generated_filename, file_path
-                )
+                    console.print("\n[yellow]DRY RUN - No files will be renamed[/yellow]")
+                new_name = filename_generator.generate_filename_with_extension(filename_metadata.generated_filename, file_path)
                 # Show current -> new filename
                 if not verbose and filename_metadata:
                     console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
@@ -484,7 +450,7 @@ async def _process_single_file(
                 include_page_headlines,
                 filename_metadata=filename_metadata,
                 pages_processed=pages_processed,
-                copy_to_source_dir=not rename  # Copy to source dir when not renaming
+                copy_to_source_dir=not rename,  # Copy to source dir when not renaming
             )
             console.print(f"[OK] Saved result to: [blue]{output_file}[/blue]")
             console.print(f"[INFO] API returned {api_images} images, saved {saved_images} images")
@@ -495,24 +461,20 @@ async def _process_single_file(
                 console.print(f"  [yellow]SKIPPED:[/yellow] Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})")
             else:
                 console.print("\n[yellow]Renaming files...[/yellow]")
-                new_source, new_ocr = FileRenamer.rename_file_pair(
-                    file_path,
-                    filename_metadata.generated_filename,
-                    dry_run=False
-                )
+                new_source, new_ocr = FileRenamer.rename_file_pair(file_path, filename_metadata.generated_filename, dry_run=False)
                 _log_rename(file_path, new_source, new_ocr, filename_metadata)
                 console.print(f"[OK] Renamed to: [green]{new_source.name}[/green]")
                 console.print(f"[OK] OCR file: [green]{new_ocr.name}[/green]")
 
     except Exception as e:
         console.print(f"[ERROR] Error processing {file_path}: [red]{e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 async def _process_multiple_files(
-    files: List[Path],
-    output_dir: Optional[Path],
-    page_pattern: Optional[str],
+    files: list[Path],
+    output_dir: Path | None,
+    page_pattern: str | None,
     include_page_headlines: bool,
     include_image_descriptions: bool,
     rename: bool,
@@ -528,11 +490,6 @@ async def _process_multiple_files(
 ):
     """Process multiple files with optional batch rename and concurrent processing."""
     try:
-
-        # For batch: default to project ocr_output unless user provided --output
-        save_at_input_location = False
-        output_manager = OutputManager(output_dir, save_at_input_location)
-
         console.print(f"Processing {len(files)} files...")
         if verbose:
             if page_pattern:
@@ -562,9 +519,7 @@ async def _process_multiple_files(
                 try:
                     # Use single-file logic for each file to support rename/dry-run
                     await _process_single_file(
-                        file_path, output_dir, page_pattern, include_page_headlines,
-                        include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename,
-                        confidence_threshold, verbose, settings, shared_client
+                        file_path, output_dir, page_pattern, include_page_headlines, include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename, confidence_threshold, verbose, settings, shared_client
                     )
                     results.append((file_path, "success", None))
                 except Exception as e:
@@ -573,6 +528,7 @@ async def _process_multiple_files(
         elif use_concurrent:
             # Concurrent processing with semaphore
             import asyncio
+
             semaphore = asyncio.Semaphore(concurrent)
 
             # Progress tracking for concurrent operations
@@ -599,7 +555,7 @@ async def _process_multiple_files(
                                     confidence_threshold,
                                     include_page_headlines,
                                     page_pattern,
-                                    verbose=False  # No verbose output in concurrent mode
+                                    verbose=False,  # No verbose output in concurrent mode
                                 )
 
                                 # Check if file was skipped (already correctly named)
@@ -619,13 +575,11 @@ async def _process_multiple_files(
                                         filename_metadata,
                                         pages_processed,
                                         copy_to_source_dir=False,  # Don't copy in rename/dry-run workflow
-                                        skip_images=True
+                                        skip_images=True,
                                     )
 
                                 # Print simple output - show current -> new filename
-                                new_name = filename_generator.generate_filename_with_extension(
-                                    filename_metadata.generated_filename, file_path
-                                )
+                                new_name = filename_generator.generate_filename_with_extension(filename_metadata.generated_filename, file_path)
                                 console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
 
                                 # Warn if below confidence threshold in dry-run
@@ -638,11 +592,8 @@ async def _process_multiple_files(
                                         console.print(f"  [yellow]SKIPPED:[/yellow] Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})")
                                     else:
                                         from .utils.file_renamer import FileRenamer
-                                        new_source, new_ocr = FileRenamer.rename_file_pair(
-                                            file_path,
-                                            filename_metadata.generated_filename,
-                                            dry_run=False
-                                        )
+
+                                        new_source, new_ocr = FileRenamer.rename_file_pair(file_path, filename_metadata.generated_filename, dry_run=False)
                                         _log_rename(file_path, new_source, new_ocr, filename_metadata)
                                         console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
 
@@ -652,9 +603,20 @@ async def _process_multiple_files(
                             else:
                                 # Non-rename mode
                                 await _process_single_file(
-                                    file_path, output_dir, page_pattern, include_page_headlines,
-                                    include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename,
-                                    confidence_threshold, verbose, settings, shared_client
+                                    file_path,
+                                    output_dir,
+                                    page_pattern,
+                                    include_page_headlines,
+                                    include_image_descriptions,
+                                    rename,
+                                    dry_run,
+                                    confirm,
+                                    force_ocr,
+                                    force_filename,
+                                    confidence_threshold,
+                                    verbose,
+                                    settings,
+                                    shared_client,
                                 )
                                 if verbose:
                                     progress.update()
@@ -690,7 +652,7 @@ async def _process_multiple_files(
                             confidence_threshold,
                             include_page_headlines,
                             page_pattern,
-                            verbose=False  # Simple output in sequential mode
+                            verbose=False,  # Simple output in sequential mode
                         )
 
                         # Check if file was skipped (already correctly named)
@@ -709,21 +671,20 @@ async def _process_multiple_files(
                                 filename_metadata,
                                 pages_processed,
                                 copy_to_source_dir=False,  # Don't copy in rename/dry-run workflow
-                                skip_images=True
+                                skip_images=True,
                             )
 
                         # Handle confirmation for this file
                         if confirm and rename and not dry_run:
                             from .utils.file_renamer import FileRenamer
+
                             if not FileRenamer.confirm_rename(file_path, filename_metadata.generated_filename):
                                 console.print(f"[yellow]Skipped:[/yellow] {file_path.name}")
                                 results.append((file_path, "skipped", filename_metadata))
                                 continue
 
                         # Print simple output - show current -> new filename
-                        new_name = filename_generator.generate_filename_with_extension(
-                            filename_metadata.generated_filename, file_path
-                        )
+                        new_name = filename_generator.generate_filename_with_extension(filename_metadata.generated_filename, file_path)
                         console.print(f"{file_path.name} -> {new_name} (Confidence: {filename_metadata.confidence})")
 
                         # Warn if below confidence threshold in dry-run
@@ -736,11 +697,8 @@ async def _process_multiple_files(
                                 console.print(f"  [yellow]SKIPPED:[/yellow] Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})")
                             else:
                                 from .utils.file_renamer import FileRenamer
-                                new_source, new_ocr = FileRenamer.rename_file_pair(
-                                    file_path,
-                                    filename_metadata.generated_filename,
-                                    dry_run=False
-                                )
+
+                                new_source, new_ocr = FileRenamer.rename_file_pair(file_path, filename_metadata.generated_filename, dry_run=False)
                                 _log_rename(file_path, new_source, new_ocr, filename_metadata)
                                 console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
 
@@ -748,9 +706,20 @@ async def _process_multiple_files(
                     else:
                         # Non-rename mode
                         await _process_single_file(
-                            file_path, output_dir, page_pattern, include_page_headlines,
-                            include_image_descriptions, rename, dry_run, confirm, force_ocr, force_filename,
-                            confidence_threshold, verbose, settings, shared_client
+                            file_path,
+                            output_dir,
+                            page_pattern,
+                            include_page_headlines,
+                            include_image_descriptions,
+                            rename,
+                            dry_run,
+                            confirm,
+                            force_ocr,
+                            force_filename,
+                            confidence_threshold,
+                            verbose,
+                            settings,
+                            shared_client,
                         )
                         results.append((file_path, "success", None))
                 except Exception as e:
@@ -789,13 +758,13 @@ async def _process_multiple_files(
 
     except Exception as e:
         console.print(f"[ERROR] Error: [red]{e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 async def _process_concat_files(
-    files: List[Path],
-    output_dir: Optional[Path],
-    page_pattern: Optional[str],
+    files: list[Path],
+    output_dir: Path | None,
+    page_pattern: str | None,
     include_page_headlines: bool,
     include_image_descriptions: bool,
     rename: bool,
@@ -851,17 +820,17 @@ async def _process_concat_files(
                     include_page_headlines=False,  # No page headlines in individual files
                     filename_metadata=None,
                     pages_processed=1,  # Each file treated as single page for caching
-                    copy_to_source_dir=False  # Don't copy in concat mode
+                    copy_to_source_dir=False,  # Don't copy in concat mode
                 )
                 total_images_saved += saved_images
 
                 # Extract just the markdown content (without YAML frontmatter) for concatenation
                 # Read the saved file and extract content after frontmatter
-                with open(individual_output_file, 'r', encoding='utf-8') as f:
+                with open(individual_output_file, encoding="utf-8") as f:
                     content = f.read()
                     # Remove YAML frontmatter
-                    if content.startswith('---'):
-                        parts = content.split('---', 2)
+                    if content.startswith("---"):
+                        parts = content.split("---", 2)
                         if len(parts) >= 3:
                             markdown_only = parts[2].strip()
                         else:
@@ -888,7 +857,7 @@ async def _process_concat_files(
         if total_images_saved == 0 and images_dir.exists():
             try:
                 images_dir.rmdir()
-                console.print(f"[INFO] Removed empty images directory")
+                console.print("[INFO] Removed empty images directory")
             except OSError:
                 pass  # Directory not empty or other issue, skip
 
@@ -903,17 +872,13 @@ async def _process_concat_files(
         filename_metadata = None
         if rename:
             if verbose:
-                console.print(f"\n[yellow]Generating intelligent filename for concatenated document...[/yellow]")
+                console.print("\n[yellow]Generating intelligent filename for concatenated document...[/yellow]")
             filename_generator = FilenameGenerator(settings, shared_client)
             # Extract filesystem dates from first file
             file_created_date, file_modified_date = _get_file_dates(files[0])
             # Use first file's name as current_filename for context
             filename_metadata = await filename_generator.analyze_content(
-                combined_markdown,
-                pages_analyzed=len(files),
-                current_filename=files[0].name,
-                file_created_date=file_created_date,
-                file_modified_date=file_modified_date
+                combined_markdown, pages_analyzed=len(files), current_filename=files[0].name, file_created_date=file_created_date, file_modified_date=file_modified_date
             )
             if verbose:
                 console.print(f"[green]Generated filename:[/green] {filename_metadata.generated_filename}")
@@ -940,7 +905,7 @@ async def _process_concat_files(
             content_length=len(combined_markdown),
             include_page_headlines=True,  # Always true for concat mode
             images_saved=total_images_saved,
-            filename_metadata=filename_metadata
+            filename_metadata=filename_metadata,
         )
 
         # Serialize to YAML frontmatter
@@ -949,7 +914,7 @@ async def _process_concat_files(
         header = f"---\n{yaml_content}---\n\n"
 
         # Write output
-        with open(output_file, 'w', encoding='utf-8') as f:
+        with open(output_file, "w", encoding="utf-8") as f:
             f.write(header)
             f.write(combined_markdown)
 
@@ -959,7 +924,7 @@ async def _process_concat_files(
 
     except Exception as e:
         console.print(f"[ERROR] Error in concatenation: [red]{e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -999,9 +964,10 @@ def watch(
 
         # Create shared Mistral client
         from mistralai import Mistral
+
         shared_client = Mistral(api_key=settings.mistral_api_key.get_secret_value())
 
-        console.print(f"\n[cyan]Watch Mode[/cyan]")
+        console.print("\n[cyan]Watch Mode[/cyan]")
         console.print(f"Folder: [blue]{folder.absolute()}[/blue]")
         console.print(f"Rename: [yellow]{'enabled' if rename else 'disabled'}[/yellow]")
         console.print(f"Concurrent: [yellow]{concurrent} files[/yellow]")
@@ -1042,7 +1008,7 @@ def watch(
                         confidence_threshold=confidence_threshold,
                         include_page_headlines=False,
                         page_pattern=None,
-                        verbose=verbose
+                        verbose=verbose,
                     )
 
                     # Skip if already correctly named
@@ -1054,11 +1020,7 @@ def watch(
                     if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
                         console.print(f"  [yellow]SKIPPED:[/yellow] Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})")
                     else:
-                        new_source, new_ocr = FileRenamer.rename_file_pair(
-                            file_path,
-                            filename_metadata.generated_filename,
-                            dry_run=False
-                        )
+                        new_source, new_ocr = FileRenamer.rename_file_pair(file_path, filename_metadata.generated_filename, dry_run=False)
                         # Mark renamed paths as processed to prevent re-triggering
                         watcher.mark_processed(new_source)
                         if new_ocr:
@@ -1075,7 +1037,7 @@ def watch(
                         include_page_headlines=False,
                         filename_metadata=None,
                         pages_processed=pages_count,
-                        copy_to_source_dir=True  # Copy to source dir in watch mode without rename
+                        copy_to_source_dir=True,  # Copy to source dir in watch mode without rename
                     )
                     console.print(f"[green][OK] Processed: {file_path.name}[/green]")
 
@@ -1085,11 +1047,7 @@ def watch(
             queue.add_job(file_path)
 
         # Create folder watcher
-        watcher = FolderWatcher(
-            folder_path=folder,
-            on_file_ready=on_file_ready,
-            recursive=recursive
-        )
+        watcher = FolderWatcher(folder_path=folder, on_file_ready=on_file_ready, recursive=recursive)
 
         # Start watch mode
         async def run_watch():
@@ -1115,7 +1073,7 @@ def watch(
 
                 # Show final stats
                 stats = queue.get_stats()
-                console.print(f"\n[cyan]Final Stats:[/cyan]")
+                console.print("\n[cyan]Final Stats:[/cyan]")
                 console.print(f"  Completed: [green]{stats['completed']}[/green]")
                 console.print(f"  Failed: [red]{stats['failed']}[/red]")
                 console.print(f"  Total: {stats['total']}")
@@ -1125,16 +1083,16 @@ def watch(
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Watch mode stopped[/yellow]")
-        raise typer.Exit(0)
+        raise typer.Exit(0) from None
     except typer.Exit:
         # Re-raise typer.Exit as-is (it's an intentional exit)
         raise
     except Exception as e:
         exit_code = ErrorHandler.handle_error(e, verbose=verbose)
-        raise typer.Exit(exit_code)
+        raise typer.Exit(exit_code) from e
 
 
-def _run_undo(paths: List[Path], confidence: float, dry_run: bool) -> None:
+def _run_undo(paths: list[Path], confidence: float, dry_run: bool) -> None:
     """Undo previous renames where confidence was at or below the given threshold."""
     all_ocr_files: list[Path] = []
 
@@ -1185,11 +1143,7 @@ def _run_undo(paths: List[Path], confidence: float, dry_run: bool) -> None:
             undo_count += 1
         else:
             try:
-                new_source, new_ocr = FileRenamer.rename_file_pair(
-                    current_source,
-                    original_stem,
-                    dry_run=False
-                )
+                new_source, new_ocr = FileRenamer.rename_file_pair(current_source, original_stem, dry_run=False)
                 _log_rename(current_source, new_source, new_ocr, None)
                 console.print(f"{current_name} -> {new_source.name} [UNDONE] (was confidence: {last_rename.confidence})")
                 undo_count += 1

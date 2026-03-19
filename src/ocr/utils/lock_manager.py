@@ -3,7 +3,6 @@
 import os
 import time
 from pathlib import Path
-from typing import Optional
 
 
 class LockManager:
@@ -66,7 +65,7 @@ class LockManager:
             os.close(fd)
 
             # Write timestamp and PID to lock file
-            with open(lock_path, 'w') as f:
+            with open(lock_path, "w") as f:
                 f.write(f"{time.time()}\n{os.getpid()}\n")
 
             return True

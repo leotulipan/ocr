@@ -1,11 +1,12 @@
 """Async processing queue with retry logic and concurrency control."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Awaitable, Optional, Dict
+
 from rich.console import Console
 
 console = Console()
@@ -13,6 +14,7 @@ console = Console()
 
 class JobStatus(Enum):
     """Status of a processing job."""
+
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -22,14 +24,15 @@ class JobStatus(Enum):
 @dataclass
 class ProcessingJob:
     """Represents a file processing job."""
+
     file_path: Path
     status: JobStatus
     attempts: int = 0
     max_attempts: int = 3
     created_at: datetime = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error: Optional[str] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
 
     def __post_init__(self):
         if self.created_at is None:
@@ -53,9 +56,9 @@ class ProcessingQueue:
             max_concurrent: Maximum number of concurrent jobs
         """
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        self.jobs: Dict[Path, ProcessingJob] = {}
+        self.jobs: dict[Path, ProcessingJob] = {}
         self.queue: asyncio.Queue[ProcessingJob] = asyncio.Queue()
-        self.processing_task: Optional[asyncio.Task] = None
+        self.processing_task: asyncio.Task | None = None
         self._shutdown = False
 
     def add_job(self, file_path: Path) -> bool:
@@ -78,11 +81,7 @@ class ProcessingQueue:
         self.queue.put_nowait(job)
         return True
 
-    async def process_job(
-        self,
-        job: ProcessingJob,
-        processor: Callable[[Path], Awaitable[None]]
-    ) -> bool:
+    async def process_job(self, job: ProcessingJob, processor: Callable[[Path], Awaitable[None]]) -> bool:
         """Process a single job with retry logic.
 
         Args:
@@ -118,10 +117,7 @@ class ProcessingQueue:
             console.print(f"[red]Failed to process {job.file_path.name} after {job.max_attempts} attempts: {job.error}[/red]")
             return False
 
-    async def start_processing(
-        self,
-        processor: Callable[[Path], Awaitable[None]]
-    ):
+    async def start_processing(self, processor: Callable[[Path], Awaitable[None]]):
         """Start processing jobs from the queue.
 
         Args:
@@ -132,7 +128,7 @@ class ProcessingQueue:
                 # Wait for a job with timeout to allow checking shutdown flag
                 job = await asyncio.wait_for(self.queue.get(), timeout=1.0)
                 asyncio.create_task(self.process_job(job, processor))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # No job available, continue loop to check shutdown
                 continue
             except Exception as e:
@@ -161,19 +157,13 @@ class ProcessingQueue:
                 except asyncio.CancelledError:
                     pass
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """Get queue statistics.
 
         Returns:
             Dictionary with counts by status
         """
-        stats = {
-            "pending": 0,
-            "processing": 0,
-            "completed": 0,
-            "failed": 0,
-            "total": len(self.jobs)
-        }
+        stats = {"pending": 0, "processing": 0, "completed": 0, "failed": 0, "total": len(self.jobs)}
 
         for job in self.jobs.values():
             stats[job.status.value] += 1

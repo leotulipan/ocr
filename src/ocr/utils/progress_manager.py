@@ -1,15 +1,15 @@
 """Progress tracking and display for OCR operations."""
 
+from rich.console import Console
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    TextColumn,
-    BarColumn,
     TaskProgressColumn,
-    TimeRemainingColumn,
+    TextColumn,
     TimeElapsedColumn,
+    TimeRemainingColumn,
 )
-from rich.console import Console
 
 console = Console()
 

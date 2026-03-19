@@ -1,6 +1,6 @@
 [project]
 name = "ocr"
-version = "0.10.0"
+version = "0.11.0"
 authors = [
     { name = "Leonard Tulipan", email = "leo@leotulipan.at" }
 ]
@@ -39,8 +39,9 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.ruff]
-line-length = 120
+line-length = 220
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B"]
+ignore = ["B008"]  # Typer requires function calls in argument defaults

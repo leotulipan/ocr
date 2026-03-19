@@ -2,19 +2,19 @@
 
 import json
 import re
-import yaml
-from pathlib import Path
-from typing import Optional
 from datetime import datetime
+from pathlib import Path
 
-from ..models.metadata import OCRMetadata, FilenameMetadata, RenameEvent
+import yaml
+
+from ..models.metadata import FilenameMetadata, OCRMetadata, RenameEvent
 
 
 class CacheManager:
     """Manage OCR metadata caching."""
 
     @staticmethod
-    def get_cached_ocr_file(source_file: Path) -> Optional[Path]:
+    def get_cached_ocr_file(source_file: Path) -> Path | None:
         """Find existing OCR markdown file for source file."""
         # Check in .ocr subdirectory
         ocr_dir = source_file.parent / ".ocr"
@@ -37,14 +37,14 @@ class CacheManager:
         return None
 
     @staticmethod
-    def extract_metadata(ocr_file: Path) -> Optional[OCRMetadata]:
+    def extract_metadata(ocr_file: Path) -> OCRMetadata | None:
         """Extract metadata from OCR markdown file."""
         try:
-            with open(ocr_file, 'r', encoding='utf-8') as f:
+            with open(ocr_file, encoding="utf-8") as f:
                 content = f.read()
 
             # Try YAML frontmatter first (new format)
-            yaml_match = re.match(r'^---\n(.*?)\n---\n\n', content, re.DOTALL)
+            yaml_match = re.match(r"^---\n(.*?)\n---\n\n", content, re.DOTALL)
             if yaml_match:
                 yaml_content = yaml_match.group(1)
                 metadata_dict = yaml.safe_load(yaml_content)
@@ -73,18 +73,20 @@ class CacheManager:
                         extracted_date=fm_data.get("extracted_date"),
                         extracted_company=fm_data.get("extracted_company"),
                         extracted_summary=fm_data.get("extracted_summary"),
-                        pages_analyzed=fm_data.get("pages_analyzed", 1)
+                        pages_analyzed=fm_data.get("pages_analyzed", 1),
                     )
 
                 # Parse rename_history if present
                 rename_history = []
                 for entry in metadata_dict.get("rename_history", []) or []:
-                    rename_history.append(RenameEvent(
-                        from_name=entry["from_name"],
-                        to_name=entry["to_name"],
-                        timestamp=datetime.fromisoformat(entry["timestamp"]),
-                        confidence=entry.get("confidence"),
-                    ))
+                    rename_history.append(
+                        RenameEvent(
+                            from_name=entry["from_name"],
+                            to_name=entry["to_name"],
+                            timestamp=datetime.fromisoformat(entry["timestamp"]),
+                            confidence=entry.get("confidence"),
+                        )
+                    )
 
                 return OCRMetadata(
                     source_file=metadata_dict.get("source_file"),
@@ -97,7 +99,7 @@ class CacheManager:
                 )
 
             # Fallback to legacy HTML comment format
-            html_match = re.match(r'^<!--\n(.*?)\n-->\n\n', content, re.DOTALL)
+            html_match = re.match(r"^<!--\n(.*?)\n-->\n\n", content, re.DOTALL)
             if html_match:
                 metadata_json = json.loads(html_match.group(1))
                 return OCRMetadata.from_legacy_json(metadata_json)
@@ -108,7 +110,7 @@ class CacheManager:
             return None
 
     @staticmethod
-    def get_cached_filename(source_file: Path, force: bool = False) -> Optional[FilenameMetadata]:
+    def get_cached_filename(source_file: Path, force: bool = False) -> FilenameMetadata | None:
         """Get cached filename metadata if available."""
         if force:
             return None
@@ -124,24 +126,24 @@ class CacheManager:
         return metadata.filename_metadata
 
     @staticmethod
-    def get_cached_markdown(source_file: Path) -> Optional[str]:
+    def get_cached_markdown(source_file: Path) -> str | None:
         """Get cached markdown content without re-OCRing."""
         ocr_file = CacheManager.get_cached_ocr_file(source_file)
         if not ocr_file:
             return None
 
         try:
-            with open(ocr_file, 'r', encoding='utf-8') as f:
+            with open(ocr_file, encoding="utf-8") as f:
                 content = f.read()
 
             # Strip YAML frontmatter
-            content = re.sub(r'^---\n.*?\n---\n\n', '', content, count=1, flags=re.DOTALL)
+            content = re.sub(r"^---\n.*?\n---\n\n", "", content, count=1, flags=re.DOTALL)
 
             # Strip legacy HTML comment header if present
-            content = re.sub(r'^<!--\n.*?\n-->\n\n', '', content, count=1, flags=re.DOTALL)
+            content = re.sub(r"^<!--\n.*?\n-->\n\n", "", content, count=1, flags=re.DOTALL)
 
             # Strip images map if present
-            content = re.sub(r'^<!--IMAGES_MAP\n.*?\n-->\n\n', '', content, count=1, flags=re.DOTALL)
+            content = re.sub(r"^<!--IMAGES_MAP\n.*?\n-->\n\n", "", content, count=1, flags=re.DOTALL)
 
             return content
 
