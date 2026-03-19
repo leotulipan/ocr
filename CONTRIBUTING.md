@@ -27,6 +27,8 @@ uv run pytest --cov=ocr --cov-report=html
 uv run pytest tests/test_page_parser.py
 ```
 
+**Note:** All tests are unit tests that run without a Mistral API key. Integration tests (end-to-end OCR with real API calls) are not yet implemented. For manual integration testing, use `ocr_test/max_mustermann_brief.png` -- expected rename: `2026-03-19 - Max Mustermann - Anfrage Datenschutz.png`.
+
 ## Linting
 
 ```bash

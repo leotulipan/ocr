@@ -412,6 +412,8 @@ uv run pytest --cov=ocr
 uv run ruff check src/ tests/
 ```
 
+**Note:** The test suite contains unit tests only. Integration tests that call the Mistral API are not yet implemented. The test file `ocr_test/max_mustermann_brief.png` is available for manual testing -- expected rename: `2026-03-19 - Max Mustermann - Anfrage Datenschutz.png`.
+
 ## Resources
 
 - [Mistral AI Documentation](https://docs.mistral.ai/)
