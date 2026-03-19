@@ -2,6 +2,7 @@
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -10,7 +11,10 @@ from mistralai import Mistral
 from ..models.settings import Settings
 from ..models.metadata import FilenameMetadata
 
-_PROMPT_FILE = Path(__file__).parent / "filename_generator_prompt.md"
+if getattr(sys, 'frozen', False):
+    _PROMPT_FILE = Path(sys._MEIPASS) / "ocr" / "services" / "filename_generator_prompt.md"
+else:
+    _PROMPT_FILE = Path(__file__).parent / "filename_generator_prompt.md"
 
 
 class FilenameGenerator:

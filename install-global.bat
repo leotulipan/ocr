@@ -5,9 +5,10 @@ REM Build the wheel package
 echo Building wheel package...
 uv build --wheel
 
-REM Install globally using uv tool
+REM Install globally using uv tool (use latest built wheel)
 echo Installing globally...
-uv tool install dist/ocr-0.1.0-py3-none-any.whl
+for %%f in (dist\ocr-*.whl) do set WHEEL=%%f
+uv tool install "%WHEEL%"
 
 REM Update shell PATH
 echo Updating shell PATH...

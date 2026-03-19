@@ -27,7 +27,14 @@ class PagePatternParser:
         """
         if not pattern:
             return set(range(1, total_pages + 1))
-        
+
+        # Handle keyword patterns
+        pattern_lower = pattern.strip().lower()
+        if pattern_lower in ("all", "*"):
+            return set(range(1, total_pages + 1))
+        if pattern_lower in ("pg1", "first"):
+            return {1}
+
         pages = set()
         parts = pattern.split(',')
         
@@ -79,7 +86,11 @@ class PagePatternParser:
         """
         if not pattern:
             return True
-        
+
+        # Handle keyword patterns
+        if pattern.strip().lower() in ("all", "*", "pg1", "first"):
+            return True
+
         # Pattern should only contain digits, commas, hyphens, and spaces
         if not re.match(r'^[\d\s,\-]+$', pattern):
             return False

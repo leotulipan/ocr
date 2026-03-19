@@ -1,5 +1,9 @@
 """Safe file renaming utilities."""
 
+import os
+import re
+import yaml
+from datetime import datetime
 from pathlib import Path
 from typing import Tuple, Optional
 from rich.console import Console
@@ -89,12 +93,20 @@ class FileRenamer:
             return (new_source_path, new_ocr_path)
 
         try:
+            # Capture timestamps before rename
+            source_stat = os.stat(source_file)
+            ocr_stat = os.stat(ocr_file) if ocr_file and ocr_file.exists() else None
+
             # Rename original file
             source_file.rename(new_source_path)
+            # Restore timestamps
+            os.utime(new_source_path, (source_stat.st_atime, source_stat.st_mtime))
 
             # Rename OCR file if exists
             if ocr_file and ocr_file.exists() and new_ocr_path:
                 ocr_file.rename(new_ocr_path)
+                if ocr_stat:
+                    os.utime(new_ocr_path, (ocr_stat.st_atime, ocr_stat.st_mtime))
 
             return (new_source_path, new_ocr_path)
 
@@ -102,10 +114,56 @@ class FileRenamer:
             # Rollback if partial rename occurred
             if new_source_path.exists() and source_file != new_source_path:
                 try:
+                    rollback_stat = os.stat(new_source_path)
                     new_source_path.rename(source_file)
+                    os.utime(source_file, (rollback_stat.st_atime, rollback_stat.st_mtime))
                 except Exception:
                     pass  # Best effort rollback
             raise RuntimeError(f"Failed to rename files: {e}") from e
+
+    @staticmethod
+    def log_rename_to_frontmatter(
+        ocr_file: Path, from_name: str, to_name: str, confidence: Optional[float] = None
+    ) -> None:
+        """Append a rename event to the YAML frontmatter rename_history."""
+        try:
+            content = ocr_file.read_text(encoding="utf-8")
+        except Exception:
+            return
+
+        yaml_match = re.match(r"^---\n(.*?)\n---\n", content, re.DOTALL)
+        if not yaml_match:
+            return
+
+        metadata_dict = yaml.safe_load(yaml_match.group(1)) or {}
+        history = metadata_dict.get("rename_history", []) or []
+        history.append({
+            "from_name": from_name,
+            "to_name": to_name,
+            "timestamp": datetime.now().isoformat(),
+            "confidence": confidence,
+        })
+        metadata_dict["rename_history"] = history
+
+        new_frontmatter = yaml.dump(metadata_dict, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        new_content = f"---\n{new_frontmatter}---\n{content[yaml_match.end():]}"
+        ocr_file.write_text(new_content, encoding="utf-8")
+
+    @staticmethod
+    def log_rename_to_file(
+        directory: Path, from_name: str, to_name: str, confidence: Optional[float] = None
+    ) -> None:
+        """Append a line to .ocr/rename.log in the given directory."""
+        ocr_dir = directory / ".ocr"
+        ocr_dir.mkdir(parents=True, exist_ok=True)
+        log_file = ocr_dir / "rename.log"
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        conf_str = f" (confidence: {confidence})" if confidence is not None else ""
+        line = f'{timestamp}  "{from_name}" → "{to_name}"{conf_str}\n'
+
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(line)
 
     @staticmethod
     def confirm_rename(source_file: Path, new_name: str) -> bool:

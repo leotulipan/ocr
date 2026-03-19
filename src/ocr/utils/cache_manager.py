@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-from ..models.metadata import OCRMetadata, FilenameMetadata
+from ..models.metadata import OCRMetadata, FilenameMetadata, RenameEvent
 
 
 class CacheManager:
@@ -76,13 +76,24 @@ class CacheManager:
                         pages_analyzed=fm_data.get("pages_analyzed", 1)
                     )
 
+                # Parse rename_history if present
+                rename_history = []
+                for entry in metadata_dict.get("rename_history", []) or []:
+                    rename_history.append(RenameEvent(
+                        from_name=entry["from_name"],
+                        to_name=entry["to_name"],
+                        timestamp=datetime.fromisoformat(entry["timestamp"]),
+                        confidence=entry.get("confidence"),
+                    ))
+
                 return OCRMetadata(
                     source_file=metadata_dict.get("source_file"),
                     processed_at=datetime.fromisoformat(metadata_dict.get("processed_at", datetime.now().isoformat())),
                     content_length=metadata_dict.get("content_length", 0),
                     include_page_headlines=metadata_dict.get("include_page_headlines", False),
                     images_saved=metadata_dict.get("images_saved", 0),
-                    filename_metadata=filename_metadata
+                    filename_metadata=filename_metadata,
+                    rename_history=rename_history,
                 )
 
             # Fallback to legacy HTML comment format

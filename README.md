@@ -1,6 +1,18 @@
 # OCR Tool
 
+[![CI](https://github.com/leotulipan/ocr/actions/workflows/ci.yml/badge.svg)](https://github.com/leotulipan/ocr/actions/workflows/ci.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A command-line OCR tool using Mistral AI for document processing with intelligent filename generation.
+
+## Quick Start
+
+```bash
+uv tool install --editable .     # Install globally
+echo "MISTRAL_API_KEY=your_key" > ~/.env  # Set API key
+ocr run document.pdf --rename    # Process and rename
+```
 
 ## Features
 
@@ -390,8 +402,14 @@ uv tool install dist/ocr-0.3.0-py3-none-any.whl
 # Install development dependencies
 uv sync --group dev
 
-# Run tests (when available)
-pytest
+# Run tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=ocr
+
+# Lint
+uv run ruff check src/ tests/
 ```
 
 ## Resources
@@ -437,7 +455,7 @@ pytest
 
 ## License
 
-[Your License Here]
+MIT License
 
 ## Author
 

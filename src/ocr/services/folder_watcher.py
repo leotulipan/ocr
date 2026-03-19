@@ -1,11 +1,12 @@
 """Folder watcher for monitoring new files."""
 
 import asyncio
+import concurrent.futures
 import time
 from pathlib import Path
-from typing import Callable, Awaitable, Set
+from typing import Callable, Awaitable, Optional, Set
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileCreatedEvent
+from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
 from rich.console import Console
 
 console = Console()
@@ -41,7 +42,12 @@ class FolderWatcher:
         self.recursive = recursive
         self.observer = Observer()
         self.handler = FileHandler(self, set())
-        self._stability_tasks: Set[asyncio.Task] = set()
+        self._stability_futures: Set[concurrent.futures.Future] = set()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def mark_processed(self, file_path: Path):
+        """Mark a path as processed to prevent re-triggering."""
+        self.handler.processed_files.add(file_path)
 
     async def wait_for_file_stability(self, file_path: Path):
         """Wait for a file to stop changing (file transfer complete).
@@ -94,13 +100,21 @@ class FolderWatcher:
         if file_path.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
             return
 
-        # Create stability check task
-        task = asyncio.create_task(self.wait_for_file_stability(file_path))
-        self._stability_tasks.add(task)
-        task.add_done_callback(self._stability_tasks.discard)
+        if self._loop is None:
+            return
 
-    def start(self):
+        # Schedule coroutine on the main event loop from watchdog's background thread
+        future = asyncio.run_coroutine_threadsafe(
+            self.wait_for_file_stability(file_path),
+            self._loop
+        )
+        self._stability_futures.add(future)
+        future.add_done_callback(self._stability_futures.discard)
+
+    def start(self, loop: Optional[asyncio.AbstractEventLoop] = None):
         """Start watching the folder."""
+        self._loop = loop or asyncio.get_event_loop()
+
         if not self.folder_path.exists():
             raise FileNotFoundError(f"Folder not found: {self.folder_path}")
 
@@ -118,9 +132,9 @@ class FolderWatcher:
         self.observer.join()
 
         # Cancel any pending stability checks
-        for task in self._stability_tasks:
-            if not task.done():
-                task.cancel()
+        for future in self._stability_futures:
+            if not future.done():
+                future.cancel()
 
 
 class FileHandler(FileSystemEventHandler):
@@ -137,12 +151,7 @@ class FileHandler(FileSystemEventHandler):
         self.processed_files = processed_files
 
     def on_created(self, event):
-        """Handle file creation event.
-
-        Args:
-            event: The file system event
-        """
-        # Only handle file creation (not directory creation)
+        """Handle file creation event."""
         if isinstance(event, FileCreatedEvent) and not event.is_directory:
             file_path = Path(event.src_path)
 
@@ -152,3 +161,8 @@ class FileHandler(FileSystemEventHandler):
 
             self.processed_files.add(file_path)
             self.watcher._handle_new_file(file_path)
+
+    def on_moved(self, event):
+        """Handle file moved/renamed event to prevent re-processing renamed files."""
+        if not event.is_directory:
+            self.processed_files.add(Path(event.dest_path))

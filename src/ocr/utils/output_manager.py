@@ -226,7 +226,8 @@ class OutputManager:
                         include_page_headlines: bool = False,
                         filename_metadata: Optional[FilenameMetadata] = None,
                         pages_processed: int = 1,
-                        copy_to_source_dir: bool = False) -> tuple[Path, int]:
+                        copy_to_source_dir: bool = False,
+                        skip_images: bool = False) -> tuple[Path, int]:
         """Save OCR text result to file and materialize image references (base64 and URLs)."""
         # Determine output location - always save in .ocr subdirectory
         if self.save_at_input_location and source_file:
@@ -252,7 +253,13 @@ class OutputManager:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Materialize images and rewrite markdown (async)
-        updated_content, img_count = await self._materialize_images(content, output_dir, prefix)
+        if skip_images:
+            # Strip images map header but don't download/save images
+            images_header_re = re.compile(r"^<!--IMAGES_MAP\n(?P<json>{[\s\S]*?})\n-->\n\n", re.MULTILINE)
+            updated_content = images_header_re.sub("", content)
+            img_count = 0
+        else:
+            updated_content, img_count = await self._materialize_images(content, output_dir, prefix)
 
         # Store original filename
         original_filename = source_file.name if source_file else None

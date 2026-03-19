@@ -234,7 +234,8 @@ class MistralOCRAdapter(OCRService):
         return markdown_body, total_images, pages_count
     
     async def process_file(self, file_path: Path, page_pattern: Optional[str] = None,
-                          include_page_headlines: bool = False) -> tuple[str, int, int]:
+                          include_page_headlines: bool = False,
+                          include_images: bool = True) -> tuple[str, int, int]:
         """Process a single file and return extracted text.
 
         Returns:
@@ -264,7 +265,7 @@ class MistralOCRAdapter(OCRService):
         ocr_kwargs = {
             "model": "mistral-ocr-latest",
             "document": document_dict,
-            "include_image_base64": True
+            "include_image_base64": include_images
         }
 
         if self.settings.include_image_descriptions:
@@ -278,7 +279,8 @@ class MistralOCRAdapter(OCRService):
         return markdown, total_images, pages_count
 
     async def process_first_page(self, file_path: Path,
-                                 include_page_headlines: bool = False) -> tuple[str, int]:
+                                 include_page_headlines: bool = False,
+                                 include_images: bool = True) -> tuple[str, int]:
         """Process only first page for filename generation analysis.
 
         Returns:
@@ -286,7 +288,8 @@ class MistralOCRAdapter(OCRService):
             Note: pages_processed is always 1 for this method, so not returned
         """
         markdown, total_images, _ = await self.process_file(file_path, page_pattern="1",
-                                                             include_page_headlines=include_page_headlines)
+                                                             include_page_headlines=include_page_headlines,
+                                                             include_images=include_images)
         return markdown, total_images
 
     async def process_files(self, file_paths: List[Path], page_pattern: Optional[str] = None,

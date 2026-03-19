@@ -34,6 +34,25 @@ console = Console()
 SUPPORTED_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.avif', '.pptx', '.docx'}
 
 
+def _log_rename(
+    file_path: Path,
+    new_source: Path,
+    new_ocr: Optional[Path],
+    filename_metadata,
+) -> None:
+    """Log a rename event to both frontmatter and directory log file."""
+    from_name = file_path.name
+    to_name = new_source.name
+    confidence = filename_metadata.confidence if filename_metadata else None
+
+    # Log to .ocr/rename.log
+    FileRenamer.log_rename_to_file(file_path.parent, from_name, to_name, confidence)
+
+    # Log to OCR markdown frontmatter
+    if new_ocr and new_ocr.exists():
+        FileRenamer.log_rename_to_frontmatter(new_ocr, from_name, to_name, confidence)
+
+
 def version_callback(value: bool):
     """Show version and exit."""
     if value:
@@ -85,6 +104,7 @@ def main(
     image_descriptions: bool = typer.Option(True, "--image-descriptions/--no-image-descriptions", help="Include AI-generated descriptions for embedded images (default: enabled)"),
     concat: bool = typer.Option(False, "--concat", help="Concatenate multiple files into one output document (treats each file as a page)"),
     rename: bool = typer.Option(False, "--rename", help="Enable intelligent filename generation and renaming"),
+    undo: bool = typer.Option(False, "--undo", help="Undo previous renames where confidence was below the threshold"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show suggested filenames without renaming"),
     confirm: bool = typer.Option(False, "--confirm", help="Ask for confirmation before operations"),
     force: bool = typer.Option(False, "--force", help="Force regenerate both OCR and filenames (equivalent to --force-ocr --force-filename)"),
@@ -104,7 +124,14 @@ def main(
         ocr run *.pdf --rename
         ocr run magazine.pdf --image-descriptions
         ocr run page1.jpg page2.jpg page3.jpg --concat --output combined.md
+        ocr run ./folder --undo --confidence 0.2
+        ocr run ./folder --undo --confidence 0.2 --dry-run
     """
+    # Handle --undo mode before anything else
+    if undo:
+        _run_undo(paths, confidence, dry_run)
+        return
+
     # Validate concurrent parameter
     if concurrent < 1:
         console.print("[red]Error:[/red] --concurrent must be at least 1")
@@ -286,7 +313,7 @@ async def _generate_filename_for_file(
         # Step 3: OCR first page only
         if verbose:
             console.print("[yellow]Processing first page for analysis...[/yellow]")
-        markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines)
+        markdown_content, _ = await ocr_service.process_first_page(file_path, include_page_headlines, include_images=False)
         pages_processed = 1
 
     # Step 4: Generate filename from first page
@@ -312,7 +339,7 @@ async def _generate_filename_for_file(
         # Smart caching: Only OCR pages 2-N (not re-OCR page 1)
         # Override page_pattern to get pages 2 onwards
         remaining_pages_pattern = "2-"
-        remaining_markdown, _, _ = await ocr_service.process_file(file_path, remaining_pages_pattern, include_page_headlines)
+        remaining_markdown, _, _ = await ocr_service.process_file(file_path, remaining_pages_pattern, include_page_headlines, include_images=False)
 
         # Concatenate first page + remaining pages
         full_markdown = markdown_content + "\n\n" + remaining_markdown
@@ -401,7 +428,8 @@ async def _process_single_file(
                     include_page_headlines,
                     filename_metadata=filename_metadata,
                     pages_processed=pages_processed,
-                    copy_to_source_dir=False  # Don't copy in rename/dry-run workflow
+                    copy_to_source_dir=False,  # Don't copy in rename/dry-run workflow
+                    skip_images=True  # No image extraction needed for rename
                 )
                 if verbose:
                     console.print(f"[OK] Saved OCR result to: [blue]{output_file}[/blue]")
@@ -463,14 +491,18 @@ async def _process_single_file(
 
         # Perform rename if requested
         if rename and filename_metadata:
-            console.print("\n[yellow]Renaming files...[/yellow]")
-            new_source, new_ocr = FileRenamer.rename_file_pair(
-                file_path,
-                filename_metadata.generated_filename,
-                dry_run=False
-            )
-            console.print(f"[OK] Renamed to: [green]{new_source.name}[/green]")
-            console.print(f"[OK] OCR file: [green]{new_ocr.name}[/green]")
+            if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                console.print(f"  [yellow]SKIPPED:[/yellow] Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})")
+            else:
+                console.print("\n[yellow]Renaming files...[/yellow]")
+                new_source, new_ocr = FileRenamer.rename_file_pair(
+                    file_path,
+                    filename_metadata.generated_filename,
+                    dry_run=False
+                )
+                _log_rename(file_path, new_source, new_ocr, filename_metadata)
+                console.print(f"[OK] Renamed to: [green]{new_source.name}[/green]")
+                console.print(f"[OK] OCR file: [green]{new_ocr.name}[/green]")
 
     except Exception as e:
         console.print(f"[ERROR] Error processing {file_path}: [red]{e}[/red]")
@@ -586,7 +618,8 @@ async def _process_multiple_files(
                                         include_page_headlines,
                                         filename_metadata,
                                         pages_processed,
-                                        copy_to_source_dir=False  # Don't copy in rename/dry-run workflow
+                                        copy_to_source_dir=False,  # Don't copy in rename/dry-run workflow
+                                        skip_images=True
                                     )
 
                                 # Print simple output - show current -> new filename
@@ -601,13 +634,17 @@ async def _process_multiple_files(
 
                                 # Perform rename if not dry-run
                                 if rename and not dry_run:
-                                    from .utils.file_renamer import FileRenamer
-                                    new_source, new_ocr = FileRenamer.rename_file_pair(
-                                        file_path,
-                                        filename_metadata.generated_filename,
-                                        dry_run=False
-                                    )
-                                    console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
+                                    if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                                        console.print(f"  [yellow]SKIPPED:[/yellow] Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})")
+                                    else:
+                                        from .utils.file_renamer import FileRenamer
+                                        new_source, new_ocr = FileRenamer.rename_file_pair(
+                                            file_path,
+                                            filename_metadata.generated_filename,
+                                            dry_run=False
+                                        )
+                                        _log_rename(file_path, new_source, new_ocr, filename_metadata)
+                                        console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
 
                                 if verbose:
                                     progress.update()
@@ -671,7 +708,8 @@ async def _process_multiple_files(
                                 include_page_headlines,
                                 filename_metadata,
                                 pages_processed,
-                                copy_to_source_dir=False  # Don't copy in rename/dry-run workflow
+                                copy_to_source_dir=False,  # Don't copy in rename/dry-run workflow
+                                skip_images=True
                             )
 
                         # Handle confirmation for this file
@@ -694,13 +732,17 @@ async def _process_multiple_files(
 
                         # Perform rename if not dry-run
                         if rename and not dry_run:
-                            from .utils.file_renamer import FileRenamer
-                            new_source, new_ocr = FileRenamer.rename_file_pair(
-                                file_path,
-                                filename_metadata.generated_filename,
-                                dry_run=False
-                            )
-                            console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
+                            if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                                console.print(f"  [yellow]SKIPPED:[/yellow] Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})")
+                            else:
+                                from .utils.file_renamer import FileRenamer
+                                new_source, new_ocr = FileRenamer.rename_file_pair(
+                                    file_path,
+                                    filename_metadata.generated_filename,
+                                    dry_run=False
+                                )
+                                _log_rename(file_path, new_source, new_ocr, filename_metadata)
+                                console.print(f"  [OK] Renamed to: [green]{new_source.name}[/green]")
 
                         results.append((file_path, "success", filename_metadata))
                     else:
@@ -1008,13 +1050,21 @@ def watch(
                         console.print(f"[green][OK] {file_path.name}[/green] (already correct)")
                         return
 
-                    # Perform rename
-                    new_source, new_ocr = FileRenamer.rename_file_pair(
-                        file_path,
-                        filename_metadata.generated_filename,
-                        dry_run=False
-                    )
-                    console.print(f"[green][OK] Renamed to: {new_source.name}[/green] (Confidence: {filename_metadata.confidence})")
+                    # Perform rename (gate on confidence threshold)
+                    if filename_metadata.confidence is not None and filename_metadata.confidence < confidence_threshold:
+                        console.print(f"  [yellow]SKIPPED:[/yellow] Confidence ({filename_metadata.confidence}) below threshold ({confidence_threshold})")
+                    else:
+                        new_source, new_ocr = FileRenamer.rename_file_pair(
+                            file_path,
+                            filename_metadata.generated_filename,
+                            dry_run=False
+                        )
+                        # Mark renamed paths as processed to prevent re-triggering
+                        watcher.mark_processed(new_source)
+                        if new_ocr:
+                            watcher.mark_processed(new_ocr)
+                        _log_rename(file_path, new_source, new_ocr, filename_metadata)
+                        console.print(f"[green][OK] Renamed to: {new_source.name}[/green] (Confidence: {filename_metadata.confidence})")
                 else:
                     # Process without renaming
                     markdown, api_images, pages_count = await ocr_service.process_file(file_path, None, False)
@@ -1045,7 +1095,7 @@ def watch(
         async def run_watch():
             """Run watch mode with queue processing."""
             queue.start(process_file_with_lock)
-            watcher.start()
+            watcher.start(asyncio.get_running_loop())
 
             console.print("[green]Press Ctrl+C to stop watching[/green]\n")
 
@@ -1082,6 +1132,75 @@ def watch(
     except Exception as e:
         exit_code = ErrorHandler.handle_error(e, verbose=verbose)
         raise typer.Exit(exit_code)
+
+
+def _run_undo(paths: List[Path], confidence: float, dry_run: bool) -> None:
+    """Undo previous renames where confidence was at or below the given threshold."""
+    all_ocr_files: list[Path] = []
+
+    for path in paths:
+        if path.is_dir():
+            ocr_dir = path / ".ocr"
+            if ocr_dir.exists():
+                all_ocr_files.extend(ocr_dir.glob("*.md"))
+        elif path.is_file():
+            ocr_file = CacheManager.get_cached_ocr_file(path)
+            if ocr_file:
+                all_ocr_files.append(ocr_file)
+            else:
+                console.print(f"[yellow]Warning:[/yellow] No OCR file found for {path}")
+
+    if not all_ocr_files:
+        console.print("[yellow]No OCR files found to check.[/yellow]")
+        return
+
+    undo_count = 0
+    skip_count = 0
+
+    for ocr_file in all_ocr_files:
+        metadata = CacheManager.extract_metadata(ocr_file)
+        if not metadata or not metadata.rename_history:
+            continue
+
+        last_rename = metadata.rename_history[-1]
+
+        if last_rename.confidence is None or last_rename.confidence > confidence:
+            continue
+
+        current_name = last_rename.to_name
+        original_name = last_rename.from_name
+
+        source_dir = ocr_file.parent.parent if ocr_file.parent.name == ".ocr" else ocr_file.parent
+        current_source = source_dir / current_name
+
+        if not current_source.exists():
+            console.print(f"[yellow]SKIP:[/yellow] {current_name} (file not found at {current_source})")
+            skip_count += 1
+            continue
+
+        original_stem = Path(original_name).stem
+
+        if dry_run:
+            console.print(f"{current_name} -> {original_name} (Confidence: {last_rename.confidence}) [DRY RUN]")
+            undo_count += 1
+        else:
+            try:
+                new_source, new_ocr = FileRenamer.rename_file_pair(
+                    current_source,
+                    original_stem,
+                    dry_run=False
+                )
+                _log_rename(current_source, new_source, new_ocr, None)
+                console.print(f"{current_name} -> {new_source.name} [UNDONE] (was confidence: {last_rename.confidence})")
+                undo_count += 1
+            except Exception as e:
+                console.print(f"[red]ERROR:[/red] Failed to undo {current_name}: {e}")
+                skip_count += 1
+
+    action = "Would undo" if dry_run else "Undone"
+    console.print(f"\n[green]{action}: {undo_count} file(s)[/green]")
+    if skip_count > 0:
+        console.print(f"[yellow]Skipped: {skip_count} file(s)[/yellow]")
 
 
 if __name__ == "__main__":

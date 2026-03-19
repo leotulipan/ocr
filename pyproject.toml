@@ -1,6 +1,6 @@
 [project]
 name = "ocr"
-version = "0.9.0"
+version = "0.10.0"
 authors = [
     { name = "Leonard Tulipan", email = "leo@leotulipan.at" }
 ]
@@ -28,4 +28,19 @@ packages = ["src/ocr"]
 [dependency-groups]
 dev = [
     "build>=1.3.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B"]

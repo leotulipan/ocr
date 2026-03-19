@@ -140,7 +140,7 @@ class ErrorHandler:
         """Display generic error for unexpected exceptions."""
         console.print(f"[red]Unexpected Error:[/red] {str(error)}")
         console.print("\n[yellow]This may be a bug. Please report it at:[/yellow]")
-        console.print("https://github.com/anthropics/claude-code/issues")
+        console.print("https://github.com/leotulipan/ocr/issues")
 
         if verbose:
             import traceback

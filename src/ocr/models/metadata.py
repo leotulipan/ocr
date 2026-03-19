@@ -19,6 +19,15 @@ class FilenameMetadata(BaseModel):
     pages_analyzed: int = 1
 
 
+class RenameEvent(BaseModel):
+    """A single rename operation record."""
+
+    from_name: str
+    to_name: str
+    timestamp: datetime
+    confidence: Optional[float] = None
+
+
 class OCRMetadata(BaseModel):
     """Complete metadata for OCR output files."""
 
@@ -29,6 +38,7 @@ class OCRMetadata(BaseModel):
     include_page_headlines: bool = False
     images_saved: int = 0
     filename_metadata: Optional[FilenameMetadata] = None
+    rename_history: list[RenameEvent] = Field(default_factory=list)
 
     @classmethod
     def from_legacy_json(cls, data: dict) -> "OCRMetadata":
@@ -40,6 +50,16 @@ class OCRMetadata(BaseModel):
         else:
             processed_at = datetime.now()
 
+        # Parse rename_history if present
+        rename_history = []
+        for entry in data.get("rename_history", []):
+            rename_history.append(RenameEvent(
+                from_name=entry["from_name"],
+                to_name=entry["to_name"],
+                timestamp=datetime.fromisoformat(entry["timestamp"]),
+                confidence=entry.get("confidence"),
+            ))
+
         return cls(
             source_file=data.get("source_file"),
             original_filename=data.get("original_filename"),
@@ -47,7 +67,8 @@ class OCRMetadata(BaseModel):
             content_length=data.get("content_length", 0),
             include_page_headlines=data.get("include_page_headlines", False),
             images_saved=data.get("images_saved", 0),
-            filename_metadata=None  # Legacy files don't have this
+            filename_metadata=None,  # Legacy files don't have this
+            rename_history=rename_history,
         )
 
     def to_yaml_dict(self) -> Dict[str, Any]:
@@ -60,6 +81,17 @@ class OCRMetadata(BaseModel):
             "include_page_headlines": self.include_page_headlines,
             "images_saved": self.images_saved,
         }
+
+        if self.rename_history:
+            result["rename_history"] = [
+                {
+                    "from_name": event.from_name,
+                    "to_name": event.to_name,
+                    "timestamp": event.timestamp.isoformat(),
+                    "confidence": event.confidence,
+                }
+                for event in self.rename_history
+            ]
 
         if self.filename_metadata:
             result["filename_metadata"] = {
