@@ -27,6 +27,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --group dev
-      - run: PYTHONPATH=src uv run pytest --cov=ocr --cov-report=xml
+      - run: uv run pytest --cov=ocr --cov-report=xml
+        env:
+          PYTHONPATH: src
       - uses: codecov/codecov-action@v4
         if: matrix.os == 'ubuntu-latest'
