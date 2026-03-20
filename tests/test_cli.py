@@ -1,10 +1,18 @@
 """Tests for CLI interface."""
 
+import re
+
 from typer.testing import CliRunner
 
 from ocr.main import app
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 class TestCLI:
@@ -23,16 +31,18 @@ class TestCLI:
     def test_run_help(self):
         result = runner.invoke(app, ["run", "--help"])
         assert result.exit_code == 0
-        assert "--rename" in result.output
-        assert "--dry-run" in result.output
-        assert "--pages" in result.output
-        assert "--confidence" in result.output
+        output = _strip_ansi(result.output)
+        assert "--rename" in output
+        assert "--dry-run" in output
+        assert "--pages" in output
+        assert "--confidence" in output
 
     def test_watch_help(self):
         result = runner.invoke(app, ["watch", "--help"])
         assert result.exit_code == 0
-        assert "--rename" in result.output
-        assert "--recursive" in result.output
+        output = _strip_ansi(result.output)
+        assert "--rename" in output
+        assert "--recursive" in output
 
     def test_run_nonexistent_file(self):
         result = runner.invoke(app, ["run", "nonexistent_file.pdf"])
