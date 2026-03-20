@@ -23,6 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - run: uv sync --group dev
       - run: PYTHONPATH=src uv run pytest --cov=ocr --cov-report=xml
       - uses: codecov/codecov-action@v4
